@@ -18,6 +18,14 @@ from keras.callbacks import ModelCheckpoint
 
 import os
 
+os.environ['TF_ENABLE_WINOGRAD_NONFUSED'] = '1'
+
+# Add metrics
+def top_3_acc(y_true, y_pred):
+   return keras.metrics.top_k_categorical_accuracy(y_true, y_pred, 3)
+
+
+# Set parameter
 batch_size = 512
 num_classes = 10
 epochs = 200
@@ -70,11 +78,12 @@ opt = keras.optimizers.rmsprop(lr=0.0001, decay=1e-6)
 # Let's train the model using RMSprop
 model.compile(loss='categorical_crossentropy',
               optimizer=opt,
-              metrics=['accuracy'])
+              metrics=['accuracy', top_3_acc])
 
 # Restore weights
 if os.path.isfile(model_path):
     model.load_weights(model_path)
+    print('Weights load success.')
 
 # Set callbacks
 checkpointer = ModelCheckpoint(filepath=model_path, verbose=0, save_weights_only=True, period=10)
@@ -116,7 +125,7 @@ else:
                         steps_per_epoch=x_train.shape[0] // batch_size,
                         epochs=epochs,
                         validation_data=(x_test, y_test),
-                        workers=4,
+                        workers=4, verbose=2,
                         callbacks=[checkpointer])
 
 # Save model and weights
