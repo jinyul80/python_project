@@ -80,6 +80,9 @@ model.compile(loss='categorical_crossentropy',
               optimizer=opt,
               metrics=['accuracy', top_3_acc])
 
+# Model info
+model.summary()
+
 # Restore weights
 if os.path.isfile(model_path):
     model.load_weights(model_path)
