@@ -24,9 +24,9 @@ def case2():
         for dim in shape:
             # print(dim)
             variable_parameters *= dim.value
-        print(variable, ":", variable_parameters)
+        print(variable, ":", format(variable_parameters, ','))
         total_parameters += variable_parameters
-    print(total_parameters)
+    print('Total parameter :', format(total_parameters, ','))
 
 
 # main
