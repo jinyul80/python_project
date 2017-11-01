@@ -163,18 +163,20 @@ class A3CNetwork(object):
             _entropy = - tf.reduce_sum(self.pred * tf.log(self.pred + 1e-5), axis=1)
             _entropy = tf.reduce_mean(_entropy)
             _value_loss = tf.losses.mean_squared_error(self.values, self.rewards, scope="value_loss")
+            _time_loss = tf.squeeze(-tf.log(1.0 / tf.cast(step_size, dtype=tf.float32)) / 10)
 
-            self.total_loss = _policy_gain + (_value_loss * 0.5) - (_entropy * 0.01)
+            self.total_loss = _policy_gain + (_value_loss * 0.5) - (_entropy * 0.01) + _time_loss
             self.optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
 
             if self.logdir:
                 tf.summary.image('states', _imageIn, 4)
 
                 tf.summary.scalar("a_pred_max", tf.reduce_mean(tf.reduce_max(self.pred, axis=1)))
-                tf.summary.scalar("policy_loss", _policy_gain)
-                tf.summary.scalar("entropy_loss", _entropy)
-                tf.summary.scalar("value_loss", _value_loss)
+                # tf.summary.scalar("policy_loss", _policy_gain)
+                # tf.summary.scalar("entropy_loss", _entropy)
+                # tf.summary.scalar("value_loss", _value_loss)
                 tf.summary.scalar("total_loss", self.total_loss)
+                tf.summary.scalar("time_loss", _time_loss)
                 tf.summary.histogram("values", self.values)
                 tf.summary.histogram("pred", self.pred)
 
@@ -288,7 +290,8 @@ class Agent(threading.Thread):
 
             if done:
                 Agent.global_reward_list.append(episode_reward)
-                if len(Agent.global_reward_list) > 100:
+                # 20 episode에 대한 점수만 저장
+                if len(Agent.global_reward_list) > 20:
                     Agent.global_reward_list = Agent.global_reward_list[1:]
 
             # Episode 학습
