@@ -9,13 +9,13 @@ def case1():
 
 def case2():
     # All trainable variables
-    val_list1 = tf.trainable_variables()
+    var_list1 = tf.trainable_variables()
 
     # Global scope trainable variables
-    # val_list2 = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'global')
+    # var_list2 = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'global')
 
     total_parameters = 0
-    for variable in val_list1:
+    for variable in var_list1:
         # shape is an array of tf.Dimension
         shape = variable.get_shape()
         # print(shape)
