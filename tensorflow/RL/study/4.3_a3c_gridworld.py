@@ -84,78 +84,52 @@ class A3CNetwork(object):
             _imageIn = tf.reshape(self.states, shape=[-1, *self.input_shape])
 
             # 콘볼루션을 통해 이미지 인코딩
-            _conv1 = slim.conv2d(activation_fn=tf.nn.elu,
-                                 inputs=_imageIn, num_outputs=32,
-                                 kernel_size=[3, 3], stride=[2, 2], padding='VALID')
-            _conv2 = slim.conv2d(activation_fn=tf.nn.elu,
-                                 inputs=_conv1, num_outputs=64,
-                                 kernel_size=[3, 3], stride=[2, 2], padding='VALID')
-            _conv3 = slim.conv2d(activation_fn=tf.nn.elu,
-                              inputs=_conv2, num_outputs=128,
-                              kernel_size=[3, 3], stride=[2, 2], padding='VALID')
-            net = slim.conv2d(activation_fn=tf.nn.elu,
-                              inputs=_conv3, num_outputs=256,
-                              kernel_size=[3, 3], stride=[2, 2], padding='VALID')
+            net = slim.conv2d(inputs=_imageIn, num_outputs=32, kernel_size=[8, 8], stride=[4, 4],
+                              activation_fn=tf.nn.elu)
+            net = slim.conv2d(inputs=net, num_outputs=64, kernel_size=[4, 4], stride=[2, 2], activation_fn=tf.nn.elu)
+            net = slim.conv2d(inputs=net, num_outputs=128, kernel_size=[3, 3], stride=[2, 2], activation_fn=tf.nn.elu)
 
             # Inception block
-            # output : [4, 4, 480]
+            # input : [6, 6, 128]
+            # output : [6, 6, 256]
             with tf.variable_scope('inception1'):
-                branch_0 = tf.layers.conv2d(inputs=net, filters=128, kernel_size=[1, 1], padding='same',
-                                            kernel_initializer=tf.contrib.layers.xavier_initializer(),
-                                            activation=tf.nn.relu)
-                branch_1 = tf.layers.conv2d(inputs=net, filters=128, kernel_size=[1, 1], padding='same',
-                                            kernel_initializer=tf.contrib.layers.xavier_initializer(),
-                                            activation=tf.nn.relu)
-                branch_1 = tf.layers.conv2d(inputs=branch_1, filters=192, kernel_size=[3, 3], padding='same',
-                                            kernel_initializer=tf.contrib.layers.xavier_initializer(),
-                                            activation=tf.nn.relu)
-                branch_2 = tf.layers.conv2d(inputs=net, filters=32, kernel_size=[1, 1], padding='same',
-                                            kernel_initializer=tf.contrib.layers.xavier_initializer(),
-                                            activation=tf.nn.relu)
-                branch_2 = tf.layers.conv2d(inputs=branch_2, filters=64, kernel_size=[3, 3], padding='same',
-                                            kernel_initializer=tf.contrib.layers.xavier_initializer(),
-                                            activation=tf.nn.relu)
-                branch_2 = tf.layers.conv2d(inputs=branch_2, filters=96, kernel_size=[3, 3], padding='same',
-                                            kernel_initializer=tf.contrib.layers.xavier_initializer(),
-                                            activation=tf.nn.relu)
-                branch_3 = tf.layers.average_pooling2d(inputs=net, pool_size=[3, 3], strides=1, padding='same')
-                branch_3 = tf.layers.conv2d(inputs=branch_3, filters=64, kernel_size=[1, 1], padding='same',
-                                            kernel_initializer=tf.contrib.layers.xavier_initializer(),
-                                            activation=tf.nn.relu)
+                branch_0 = slim.conv2d(inputs=net, num_outputs=64, kernel_size=[1, 1], activation_fn=tf.nn.elu)
+
+                branch_1 = slim.conv2d(inputs=net, num_outputs=32, kernel_size=[1, 1], activation_fn=tf.nn.elu)
+                branch_1 = slim.conv2d(inputs=branch_1, num_outputs=64, kernel_size=[3, 3], activation_fn=tf.nn.elu)
+
+                branch_2 = slim.conv2d(inputs=net, num_outputs=16, kernel_size=[1, 1], activation_fn=tf.nn.elu)
+                branch_2 = slim.conv2d(inputs=branch_2, num_outputs=32, kernel_size=[3, 1], activation_fn=tf.nn.elu)
+                branch_2 = slim.conv2d(inputs=branch_2, num_outputs=64, kernel_size=[1, 3], activation_fn=tf.nn.elu)
+
+                branch_3 = slim.max_pool2d(inputs=net, kernel_size=[3, 3], stride=1, padding='same')
+                branch_3 = slim.conv2d(inputs=branch_3, num_outputs=64, kernel_size=[1, 1], activation_fn=tf.nn.elu)
+
                 net = tf.concat(axis=3, values=[branch_0, branch_1, branch_2, branch_3])
 
             # Inception block
-            # output : [4, 4, 832]
+            # output : [6, 6, 416]
             with tf.variable_scope('inception2'):
-                branch_0 = tf.layers.conv2d(inputs=net, filters=256, kernel_size=[1, 1], padding='same',
-                                            kernel_initializer=tf.contrib.layers.xavier_initializer(),
-                                            activation=tf.nn.relu)
-                branch_1 = tf.layers.conv2d(inputs=net, filters=160, kernel_size=[1, 1], padding='same',
-                                            kernel_initializer=tf.contrib.layers.xavier_initializer(),
-                                            activation=tf.nn.relu)
-                branch_1 = tf.layers.conv2d(inputs=branch_1, filters=320, kernel_size=[3, 3], padding='same',
-                                            kernel_initializer=tf.contrib.layers.xavier_initializer(),
-                                            activation=tf.nn.relu)
-                branch_2 = tf.layers.conv2d(inputs=net, filters=32, kernel_size=[1, 1], padding='same',
-                                            kernel_initializer=tf.contrib.layers.xavier_initializer(),
-                                            activation=tf.nn.relu)
-                branch_2 = tf.layers.conv2d(inputs=branch_2, filters=128, kernel_size=[1, 3], padding='same',
-                                            kernel_initializer=tf.contrib.layers.xavier_initializer(),
-                                            activation=tf.nn.relu)
-                branch_2 = tf.layers.conv2d(inputs=branch_2, filters=128, kernel_size=[3, 1], padding='same',
-                                            kernel_initializer=tf.contrib.layers.xavier_initializer(),
-                                            activation=tf.nn.relu)
-                branch_3 = tf.layers.average_pooling2d(inputs=net, pool_size=[3, 3], strides=1, padding='same')
-                branch_3 = tf.layers.conv2d(inputs=branch_3, filters=128, kernel_size=[1, 1], padding='same',
-                                            kernel_initializer=tf.contrib.layers.xavier_initializer(),
-                                            activation=tf.nn.relu)
+                branch_0 = slim.conv2d(inputs=net, num_outputs=96, kernel_size=[1, 1], activation_fn=tf.nn.elu)
+
+                branch_1 = slim.conv2d(inputs=net, num_outputs=64, kernel_size=[1, 1], activation_fn=tf.nn.elu)
+                branch_1 = slim.conv2d(inputs=branch_1, num_outputs=128, kernel_size=[3, 3], activation_fn=tf.nn.elu)
+
+                branch_2 = slim.conv2d(inputs=net, num_outputs=32, kernel_size=[1, 1], activation_fn=tf.nn.elu)
+                branch_2 = slim.conv2d(inputs=branch_2, num_outputs=64, kernel_size=[3, 1], activation_fn=tf.nn.elu)
+                branch_2 = slim.conv2d(inputs=branch_2, num_outputs=128, kernel_size=[1, 3], activation_fn=tf.nn.elu)
+
+                branch_3 = slim.max_pool2d(inputs=net, kernel_size=[3, 3], stride=1, padding='same')
+                branch_3 = slim.conv2d(inputs=branch_3, num_outputs=64, kernel_size=[1, 1])
+
                 net = tf.concat(axis=3, values=[branch_0, branch_1, branch_2, branch_3])
 
+            net = slim.max_pool2d(inputs=net, kernel_size=[6, 6])
             net = tf.contrib.layers.flatten(net)
-            _dense = slim.fully_connected(net, 1024, activation_fn=tf.nn.elu)
+            _dense = slim.fully_connected(net, 512, activation_fn=tf.nn.elu)
 
             # LSTM
-            _rnn_out_size = 512
+            _rnn_out_size = 256
             _rnn_in = tf.expand_dims(_dense, [0])
             lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(num_units=_rnn_out_size, state_is_tuple=True)
             # cell 초기화
