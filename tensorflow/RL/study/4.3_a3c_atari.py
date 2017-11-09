@@ -173,7 +173,7 @@ class A3CNetwork(object):
             _entropy = - tf.reduce_sum(self.pred * tf.log(self.pred + 1e-5), axis=1)
             _entropy = tf.reduce_mean(_entropy)
             _value_loss = tf.losses.mean_squared_error(self.values, self.rewards, scope="value_loss")
-            _time_loss = tf.squeeze(-tf.log(1.0 / tf.cast(step_size, dtype=tf.float32)) / 10)
+            _time_loss = tf.squeeze(-tf.log(1.0 / tf.cast(step_size, dtype=tf.float32)) / 10) * 0.5
 
             self.total_loss = _policy_gain + (_value_loss * 0.5) - (_entropy * 0.01) + _time_loss
             self.optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
