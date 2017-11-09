@@ -95,41 +95,51 @@ class A3CNetwork(object):
             _imageIn = tf.reshape(self.states, shape=[-1, *self.input_shape])
 
             # 콘볼루션을 통해 이미지 인코딩
-            _conv1 = slim.conv2d(activation_fn=tf.nn.elu,
-                                 inputs=_imageIn, num_outputs=16,
-                                 kernel_size=[8, 8], stride=[4, 4], padding='VALID')
-            net = slim.conv2d(activation_fn=tf.nn.elu,
-                              inputs=_conv1, num_outputs=32,
-                              kernel_size=[4, 4], stride=[2, 2], padding='VALID')
-
-            net = slim.max_pool2d(inputs=net, kernel_size=[2, 2], stride=2)
+            net = slim.conv2d(inputs=_imageIn, num_outputs=16, kernel_size=[8, 8], stride=[4, 4],
+                              activation_fn=tf.nn.elu)
+            net = slim.conv2d(inputs=net, num_outputs=32, kernel_size=[4, 4], stride=[2, 2], activation_fn=tf.nn.elu)
+            net = slim.conv2d(inputs=net, num_outputs=64, kernel_size=[3, 3], stride=[2, 2], activation_fn=tf.nn.elu)
 
             # Inception block
-            # output : [4, 4, 128]
+            # output : [5, 5, 128]
             with tf.variable_scope('inception1'):
-                branch_0 = slim.conv2d(inputs=net, num_outputs=16, kernel_size=[1, 1],
-                                       activation_fn=tf.nn.elu, padding='SAME')
-                branch_1 = slim.conv2d(inputs=net, num_outputs=16, kernel_size=[1, 1],
-                                       activation_fn=tf.nn.elu, padding='SAME')
-                branch_1 = slim.conv2d(inputs=branch_1, num_outputs=32, kernel_size=[3, 3],
-                                       activation_fn=tf.nn.elu, padding='SAME')
-                branch_2 = slim.conv2d(inputs=net, num_outputs=16, kernel_size=[1, 1],
-                                       activation_fn=tf.nn.elu, padding='SAME')
-                branch_2 = slim.conv2d(inputs=branch_2, num_outputs=32, kernel_size=[3, 3],
-                                       activation_fn=tf.nn.elu, padding='SAME')
-                branch_2 = slim.conv2d(inputs=branch_2, num_outputs=32, kernel_size=[3, 3],
-                                       activation_fn=tf.nn.elu, padding='SAME')
-                branch_3 = slim.avg_pool2d(inputs=net, kernel_size=[3, 3], stride=1, padding='SAME')
-                branch_3 = slim.conv2d(inputs=branch_3, num_outputs=48, kernel_size=[1, 1],
-                                       activation_fn=tf.nn.elu, padding='SAME')
+                branch_0 = slim.conv2d(inputs=net, num_outputs=32, kernel_size=[1, 1], activation_fn=tf.nn.elu)
+
+                branch_1 = slim.conv2d(inputs=net, num_outputs=16, kernel_size=[1, 1], activation_fn=tf.nn.elu)
+                branch_1 = slim.conv2d(inputs=branch_1, num_outputs=32, kernel_size=[3, 3], activation_fn=tf.nn.elu)
+
+                branch_2 = slim.conv2d(inputs=net, num_outputs=16, kernel_size=[1, 1], activation_fn=tf.nn.elu)
+                branch_2 = slim.conv2d(inputs=branch_2, num_outputs=32, kernel_size=[3, 3], activation_fn=tf.nn.elu)
+                branch_2 = slim.conv2d(inputs=branch_2, num_outputs=32, kernel_size=[3, 3], activation_fn=tf.nn.elu)
+
+                branch_3 = slim.max_pool2d(inputs=net, kernel_size=[3, 3], stride=1, padding='SAME')
+                branch_3 = slim.conv2d(inputs=branch_3, num_outputs=32, kernel_size=[1, 1], activation_fn=tf.nn.elu)
 
                 net = tf.concat(axis=3, values=[branch_0, branch_1, branch_2, branch_3])
 
+            # Inception block
+            # output : [5, 5, 256]
+            with tf.variable_scope('inception2'):
+                branch_0 = slim.conv2d(inputs=net, num_outputs=64, kernel_size=[1, 1], activation_fn=tf.nn.elu)
+
+                branch_1 = slim.conv2d(inputs=net, num_outputs=64, kernel_size=[1, 1], activation_fn=tf.nn.elu)
+                branch_1 = slim.conv2d(inputs=branch_1, num_outputs=96, kernel_size=[3, 3], activation_fn=tf.nn.elu)
+
+                branch_2 = slim.conv2d(inputs=net, num_outputs=32, kernel_size=[1, 1], activation_fn=tf.nn.elu)
+                branch_2 = slim.conv2d(inputs=branch_2, num_outputs=64, kernel_size=[3, 3], activation_fn=tf.nn.elu)
+                branch_2 = slim.conv2d(inputs=branch_2, num_outputs=64, kernel_size=[3, 3], activation_fn=tf.nn.elu)
+
+                branch_3 = slim.max_pool2d(inputs=net, kernel_size=[3, 3], stride=1, padding='SAME')
+                branch_3 = slim.conv2d(inputs=branch_3, num_outputs=32, kernel_size=[1, 1], activation_fn=tf.nn.elu)
+
+                net = tf.concat(axis=3, values=[branch_0, branch_1, branch_2, branch_3])
+
+            net = slim.max_pool2d(inputs=net, kernel_size=[5, 5])
             net = tf.contrib.layers.flatten(net)
-            _dense1 = slim.fully_connected(net, 512, activation_fn=tf.nn.elu)
+            _dense1 = slim.fully_connected(net, 384, activation_fn=tf.nn.elu)
 
             # LSTM
-            _rnn_out_size = 64
+            _rnn_out_size = 128
             _rnn_in = tf.expand_dims(_dense1, [0])
             lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(num_units=_rnn_out_size, state_is_tuple=True)
             # cell 초기화
