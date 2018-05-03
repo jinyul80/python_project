@@ -6,18 +6,25 @@ import threading
 import argparse
 import time
 from gridworld import gameEnv
+import cv2
 
 parser = argparse.ArgumentParser(description="Simple 'argparse' demo application")
 parser.add_argument('--mode', default='train', help='Execute mode')
 parser.add_argument('--learning_rate', default=1e-5, type=float)
 parser.add_argument('--logdir', default='./log/4.3_a3c_gridworld_log')
 parser.add_argument('--max_steps', default=1000001, type=int)
-parser.add_argument('--n_threads', default=2, type=int)
+parser.add_argument('--n_threads', default=8, type=int)
 parser.add_argument('--update_ep_size', default=1, type=int)
-parser.add_argument('--env_size', default=5, type=int)
+parser.add_argument('--env_size', default=10, type=int)
 parser.add_argument('--max_ep_steps', default=50, type=int)
 
 args = parser.parse_args()
+
+# env 환경 파라메터
+input_size = 42 * 42 * 3
+input_shape = [42, 42, 3]
+output_dim = 4
+
 
 # 학습 변수 copy 함수
 def copy_src_to_dst(from_scope, to_scope):
@@ -67,20 +74,21 @@ class A3CNetwork(object):
 
         self._build()
 
-        self.global_episodes = tf.Variable(0, dtype=tf.int32, name='global_episodes', trainable=False)
-
     def _build(self):
         with tf.variable_scope(self.name):
+
+            self.global_episodes = tf.Variable(0, dtype=tf.int32, name='global_episodes', trainable=False)
+
             # 신경망은 게임으로부터 벡터화된배열로 프레임을 받아서
             # 이것을 리사이즈 하고, 4개의 콘볼루션 레이어를 통해 처리한다.
 
-            # 입력값을 받는 부분 21168 차원은 84*84*3 의 차원이다.
+            # 입력값을 받는 부분 5292 차원은 42*42*3 의 차원이다.
             self.states = tf.placeholder(shape=[None, self.input_size], dtype=tf.float32, name='input_state')
             self.actions = tf.placeholder(shape=[None, self.output_size], dtype=tf.float32, name='input_action')
             self.advantages = tf.placeholder(tf.float32, [None], name="advantages")
             self.rewards = tf.placeholder(tf.float32, [None], name="reward")
 
-            # conv2d 처리를 위해 84x84x3 으로 다시 리사이즈
+            # conv2d 처리를 위해 42x42x3 으로 다시 리사이즈
             _imageIn = tf.reshape(self.states, shape=[-1, *self.input_shape])
 
             # 콘볼루션을 통해 이미지 인코딩
@@ -90,8 +98,8 @@ class A3CNetwork(object):
             net = slim.conv2d(inputs=net, num_outputs=128, kernel_size=[3, 3], stride=[2, 2], activation_fn=tf.nn.elu)
 
             # Inception block
-            # input : [6, 6, 128]
-            # output : [6, 6, 256]
+            # input : [3, 3, 128]
+            # output : [3, 3, 256]
             with tf.variable_scope('inception1'):
                 branch_0 = slim.conv2d(inputs=net, num_outputs=64, kernel_size=[1, 1], activation_fn=tf.nn.elu)
 
@@ -108,7 +116,7 @@ class A3CNetwork(object):
                 net = tf.concat(axis=3, values=[branch_0, branch_1, branch_2, branch_3])
 
             # Inception block
-            # output : [6, 6, 416]
+            # output : [3, 3, 416]
             with tf.variable_scope('inception2'):
                 branch_0 = slim.conv2d(inputs=net, num_outputs=96, kernel_size=[1, 1], activation_fn=tf.nn.elu)
 
@@ -124,7 +132,7 @@ class A3CNetwork(object):
 
                 net = tf.concat(axis=3, values=[branch_0, branch_1, branch_2, branch_3])
 
-            net = slim.max_pool2d(inputs=net, kernel_size=[6, 6])
+            net = slim.max_pool2d(inputs=net, kernel_size=[3, 3])
             net = tf.contrib.layers.flatten(net)
             _dense = slim.fully_connected(net, 512, activation_fn=tf.nn.elu)
 
@@ -133,9 +141,9 @@ class A3CNetwork(object):
             _rnn_in = tf.expand_dims(_dense, [0])
             lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(num_units=_rnn_out_size, state_is_tuple=True)
             # cell 초기화
-            c_init = np.zeros((1, lstm_cell.state_size.c), np.float32)
+            c_init = np.zeros((1, lstm_cell.state_size.c), np.dtype(float))
             # 은닉층 초기화
-            h_init = np.zeros((1, lstm_cell.state_size.h), np.float32)
+            h_init = np.zeros((1, lstm_cell.state_size.h), np.dtype(float))
             self.state_init = [c_init, h_init]
             # 셀에 넣을 값 받기
             c_in = tf.placeholder(tf.float32, [1, lstm_cell.state_size.c])
@@ -195,7 +203,7 @@ class A3CNetwork(object):
 class Agent(threading.Thread):
     global_episode = 1
     global_reward_list = []  # 100개 까지 저장
-    max_ep_steps = 50 # episode별 최대 걸음 수
+    max_ep_steps = 50  # episode별 최대 걸음 수
 
     def __init__(self, session, env, coord, id, global_network, input_size, input_shape, output_dim, learning_rate,
                  update_ep_size, is_training=True, logdir=None):
@@ -222,12 +230,14 @@ class Agent(threading.Thread):
     # Episode 결과 출력
     def print(self, reward, avg_reward, rTime):
         message = "Episode : {} , Agent(name={}, reward= {:.2f}, avg= {:.2f}) ({:.2f} sec)".format(self.local_episode,
-                                                     self.name, reward, avg_reward, rTime)
+                                                                                                   self.name, reward,
+                                                                                                   avg_reward, rTime)
         print(message)
 
     # State 전처리
     def preProcessState(self, states):
-        return np.reshape(states, [self.input_size])
+        resize_img = cv2.resize(states, (42, 42))
+        return np.reshape(resize_img, [self.input_size])
 
     def run(self):
         while not self.coord.should_stop():
@@ -273,7 +283,8 @@ class Agent(threading.Thread):
                     self.local.state_in[0]: rnn_state[0],
                     self.local.state_in[1]: rnn_state[1]
                 }
-                action_prob, v, rnn_state = self.sess.run([self.local.pred, self.local.values, self.local.state_out], feed_dict=feed)
+                action_prob, v, rnn_state = self.sess.run([self.local.pred, self.local.values, self.local.state_out],
+                                                          feed_dict=feed)
                 action_prob = np.squeeze(action_prob)
                 a = np.random.choice(self.output_dim, size=1, p=action_prob)[0]
 
@@ -363,10 +374,7 @@ def main_train():
                 os.makedirs(checkpoint_dir)
                 print("Directory {} was created".format(checkpoint_dir))
 
-            # env 환경 파라메터
-            input_size = 21168
-            input_shape = [84, 84, 3]
-            output_dim = 4
+            # Global network 생성
             global_network = A3CNetwork(name="global",
                                         input_size=input_size,
                                         input_shape=input_shape,
@@ -375,6 +383,7 @@ def main_train():
             thread_list = []
             env_list = []
 
+            # Thread agent 생성
             for id in range(args.n_threads):
                 logdir = args.logdir
 
@@ -404,29 +413,31 @@ def main_train():
             init = tf.global_variables_initializer()
             sess.run(init)
 
+            # saver 설정
+            var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, "global")
+            saver = tf.train.Saver(var_list=var_list)
+
             # Save 파일 있을 경우 복구
-            if tf.train.get_checkpoint_state(os.path.dirname(save_path)):
-                var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, "global")
-                saver = tf.train.Saver(var_list=var_list)
-                saver.restore(sess, save_path)
+            if tf.train.get_checkpoint_state(checkpoint_dir):
+                read_path = tf.train.latest_checkpoint(checkpoint_dir)
+                saver.restore(sess, read_path)
 
                 Agent.global_episode = sess.run(global_network.global_episodes)
                 print("Model restored to global")
             else:
                 print("No model is found")
 
+            # Thread Start
             for t in thread_list:
                 t.start()
                 time.sleep(1)
 
             print("Ctrl + C to close")
 
-            # saver 설정
-            var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, "global")
-            saver = tf.train.Saver(var_list=var_list)
-
+            # Save step 설정
             div_num = 1000
             save_idx = int(sess.run(global_network.global_episodes) / div_num)
+
             while not coord.should_stop():
                 current_episode = Agent.global_episode
                 sess.run(global_network.global_episodes.assign(current_episode))
@@ -435,7 +446,7 @@ def main_train():
                 if save_idx != temp_idx:
                     save_idx = temp_idx
 
-                    saver.save(sess, save_path)
+                    saver.save(sess, save_path, global_step=current_episode)
                     print('Checkpoint Saved to {}'.format(save_path))
 
                 if current_episode >= args.max_steps:
@@ -443,7 +454,7 @@ def main_train():
                     coord.request_stop()
                     coord.join(thread_list)
 
-                time.sleep(1)
+                time.sleep(2)
 
     except KeyboardInterrupt:
         print("Closing threads")
@@ -478,10 +489,7 @@ def main_test():
             os.makedirs(checkpoint_dir)
             print("Directory {} was created".format(checkpoint_dir))
 
-        # env 환경 파라메터
-        input_size = 21168
-        input_shape = [84, 84, 3]
-        output_dim = 4
+        # Global network 생성
         global_network = A3CNetwork(name="global",
                                     input_size=input_size,
                                     input_shape=input_shape,
@@ -510,11 +518,14 @@ def main_test():
         init = tf.global_variables_initializer()
         sess.run(init)
 
+        # saver 설정
+        var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, "global")
+        saver = tf.train.Saver(var_list=var_list)
+
         # Save 파일 있을 경우 복구
-        if tf.train.get_checkpoint_state(os.path.dirname(save_path)):
-            var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, "global")
-            saver = tf.train.Saver(var_list=var_list)
-            saver.restore(sess, save_path)
+        if tf.train.get_checkpoint_state(checkpoint_dir):
+            read_path = tf.train.latest_checkpoint(checkpoint_dir)
+            saver.restore(sess, read_path)
             print("Model restored to global")
         else:
             print("No model is found")
@@ -525,6 +536,7 @@ def main_test():
 
 
 if __name__ == '__main__':
+
     if args.mode == 'train':
         main_train()
     else:
