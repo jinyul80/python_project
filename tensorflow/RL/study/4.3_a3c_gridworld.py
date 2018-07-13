@@ -13,9 +13,9 @@ parser.add_argument('--mode', default='train', help='Execute mode')
 parser.add_argument('--learning_rate', default=1e-5, type=float)
 parser.add_argument('--logdir', default='./log/4.3_a3c_gridworld_log')
 parser.add_argument('--max_steps', default=1000001, type=int)
-parser.add_argument('--n_threads', default=8, type=int)
+parser.add_argument('--n_threads', default=4, type=int)
 parser.add_argument('--update_ep_size', default=1, type=int)
-parser.add_argument('--env_size', default=10, type=int)
+parser.add_argument('--env_size', default=5, type=int)
 parser.add_argument('--max_ep_steps', default=50, type=int)
 
 args = parser.parse_args()
@@ -74,11 +74,12 @@ class A3CNetwork(object):
 
         self._build()
 
+        self.global_episodes = tf.Variable(0, dtype=tf.int32, name='global_episodes', trainable=False)
+        self.input_ep = tf.placeholder(dtype=tf.int32)
+        self.update_ep = self.global_episodes.assign(self.input_ep)
+
     def _build(self):
         with tf.variable_scope(self.name):
-
-            self.global_episodes = tf.Variable(0, dtype=tf.int32, name='global_episodes', trainable=False)
-
             # 신경망은 게임으로부터 벡터화된배열로 프레임을 받아서
             # 이것을 리사이즈 하고, 4개의 콘볼루션 레이어를 통해 처리한다.
 
@@ -228,10 +229,10 @@ class Agent(threading.Thread):
         self.is_training = is_training
 
     # Episode 결과 출력
-    def print(self, reward, avg_reward, rTime):
-        message = "Episode : {} , Agent(name={}, reward= {:.2f}, avg= {:.2f}) ({:.2f} sec)".format(self.local_episode,
+    def print(self, reward, avg_reward, frame_sec):
+        message = "Episode : {} , Agent(name={}, reward= {:.2f}, avg= {:.2f}) ({:.2f} frame/sec)".format(self.local_episode,
                                                                                                    self.name, reward,
-                                                                                                   avg_reward, rTime)
+                                                                                                   avg_reward, frame_sec)
         print(message)
 
     # State 전처리
@@ -318,9 +319,10 @@ class Agent(threading.Thread):
 
         # 러닝 시간
         duration = time.time() - start_time
-        sec_per_step = float(duration)
+        sec_per_step = float(duration + 1e-6)
+        frame_sec = float(len(episode_buffer)) / sec_per_step
 
-        self.print(np.mean(reward_list), avg_reward, sec_per_step)
+        self.print(np.mean(reward_list), avg_reward, frame_sec)
 
     # Model 학습
     def train(self, buffer):
@@ -440,7 +442,7 @@ def main_train():
 
             while not coord.should_stop():
                 current_episode = Agent.global_episode
-                sess.run(global_network.global_episodes.assign(current_episode))
+                sess.run(global_network.update_ep, feed_dict={global_network.input_ep: current_episode})
                 temp_idx = int(current_episode / div_num)
                 # Global step XX 회마다 모델 저장
                 if save_idx != temp_idx:
