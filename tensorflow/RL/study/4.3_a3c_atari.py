@@ -8,6 +8,8 @@ import argparse
 import time
 import gc
 
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+
 parser = argparse.ArgumentParser(description="Simple 'argparse' demo application")
 parser.add_argument('--mode', default='train', help='Execute mode')
 parser.add_argument('--learning_rate', default=1e-4, type=float)
@@ -79,6 +81,8 @@ class A3CNetwork(object):
         self._build()
 
         self.global_episodes = tf.Variable(0, dtype=tf.int32, name='global_episodes', trainable=False)
+        self.input_ep = tf.placeholder(dtype=tf.int32)
+        self.update_ep = self.global_episodes.assign(self.input_ep)
 
     def _build(self):
         with tf.variable_scope(self.name):
@@ -233,9 +237,9 @@ class Agent(threading.Thread):
         self.is_training = is_training
 
     # Episode 결과 출력
-    def print(self, reward, avg_reward, rTime):
-        message = "Episode : {} , Agent(name={}, reward= {:.2f}, avg= {:.2f}) ({:.2f} sec)".format(self.local_episode,
-                                                     self.name, reward, avg_reward, rTime)
+    def print(self, reward, avg_reward, frame_sec):
+        message = "Episode : {} , Agent(name={}, reward= {:.2f}, avg= {:.2f}) ({:.2f} frame/sec)".format(self.local_episode,
+                                                     self.name, reward, avg_reward, frame_sec)
         print(message)
 
     def run(self):
@@ -323,11 +327,12 @@ class Agent(threading.Thread):
 
         # 러닝 시간
         duration = time.time() - start_time
-        sec_per_step = float(duration)
+        sec_per_step = float(duration + 1e-6)
+        frame_sec = float(np.sum(action_count)) / sec_per_step
 
-        self.print(episode_reward, avg_reward, sec_per_step)
-        print('Action count : ', np.sum(action_count), 'frame/sec:{:.4f}'.format(sec_per_step/np.sum(action_count)),
-              ':', action_count)
+        self.print(episode_reward, avg_reward, frame_sec)
+        # print('Action count : ', np.sum(action_count), 'frame/sec:{:.4f}'.format(sec_per_step/np.sum(action_count)),
+        #       ':', action_count)
 
     # Model 학습
     def train(self, buffer, done):
@@ -426,16 +431,21 @@ def main_train():
             init = tf.global_variables_initializer()
             sess.run(init)
 
+            # saver 설정
+            var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, "global")
+            saver = tf.train.Saver(var_list=var_list)
+
             # Save 파일 있을 경우 복구
             if tf.train.get_checkpoint_state(os.path.dirname(save_path)):
-                var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, "global")
-                saver = tf.train.Saver(var_list=var_list)
                 saver.restore(sess, save_path)
 
                 Agent.global_episode = sess.run(global_network.global_episodes)
                 print("Model restored to global")
             else:
                 print("No model is found")
+
+            # 모델 그래프 최종 확정
+            tf.get_default_graph().finalize()
 
             print('\nProgram start')
             print('Learning rate :', args.learning_rate)
@@ -446,16 +456,12 @@ def main_train():
 
             print("Ctrl + C to close")
             
-            # saver 설정
-            var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, "global")
-            saver = tf.train.Saver(var_list=var_list)
-            
             div_num = 100
             save_idx = int(sess.run(global_network.global_episodes) / div_num)
 
             while not coord.should_stop():
                 current_episode = Agent.global_episode
-                sess.run(global_network.global_episodes.assign(current_episode))
+                sess.run(global_network.update_ep, feed_dict={global_network.input_ep: current_episode})
                 temp_idx = int(current_episode / div_num)
                 # Global step XX 회마다 모델 저장
                 if save_idx != temp_idx:
