@@ -6,7 +6,6 @@ import random
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
-
 class Gym:
 
     def __init__(self, screen_width=6, screen_height=10, show_game=True):
@@ -39,8 +38,8 @@ class Gym:
                         left='off', labelleft='off',
                         bottom='off', labelbottom='off')
 
-        plt.draw()
         plt.ion()
+        plt.draw()
         plt.show()
 
         return fig, axis
@@ -68,6 +67,8 @@ class Gym:
             self.total_game)
 
         self.axis.clear()
+        plt.axis((0, self.screen_width, 0, self.screen_height))
+
         self.axis.set_title(title, fontsize=12)
 
         road = patches.Rectangle((self.road_left - 1, 0), self.road_width + 1,
@@ -90,6 +91,8 @@ class Gym:
         self.axis.add_patch(block2)
 
         self.fig.canvas.draw()
+        self.fig.canvas.flush_events()
+
         plt.pause(0.0001)
 
     def reset(self):
