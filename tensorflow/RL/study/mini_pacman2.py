@@ -59,6 +59,9 @@ class Gym:
         if self.block[1]["row"] < self.screen_height:
             state[self.block[1]["col"], self.block[1]["row"]] = 1
 
+        if self.block[2]["row"] < self.screen_height:
+            state[self.block[2]["col"], self.block[2]["row"]] = 1
+
         return state.reshape((-1, self.screen_width * self.screen_height))
 
     def draw_screen(self):
@@ -86,7 +89,7 @@ class Gym:
         block2 = patches.Circle((self.block[1][
                                 "col"] - 0.5, self.block[1]["row"]), 0.5, linewidth=0, facecolor="#EB70AA")
         block3 = patches.Circle((self.block[2][
-                                     "col"] - 0.5, self.block[2]["row"]), 0.5, linewidth=0, facecolor="blue")
+                                     "col"] - 0.5, self.block[2]["row"]), 0.5, linewidth=0, facecolor="#0099FF")
 
         self.axis.add_patch(road)
         self.axis.add_patch(car)
@@ -97,7 +100,7 @@ class Gym:
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
 
-        plt.pause(0.001)
+        plt.pause(0.1)
 
     def reset(self):
         self.current_reward = 0
