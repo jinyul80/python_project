@@ -7,18 +7,22 @@ import threading
 import argparse
 import time
 
-import mini_pacman
+import mini_pacman2 as mini_pacman
 
 parser = argparse.ArgumentParser(description="Simple 'argparse' demo application")
 parser.add_argument('--mode', default='train', help='Execute mode')
-parser.add_argument('--learning_rate', default=1e-2, type=float)
-parser.add_argument('--logdir', default='./log/4.3_a3c_pacman_log/a3c+BN+lr')
-parser.add_argument('--max_steps', default=1000001, type=int)
+parser.add_argument('--learning_rate', default=5e-3, type=float)
+parser.add_argument('--logdir', default='./log/pacman_log/a3c_5e-3_p2')
+parser.add_argument('--max_steps', default=10001, type=int)
 parser.add_argument('--n_threads', default=4, type=int)
 parser.add_argument('--update_ep_size', default=1, type=int)
 
 args = parser.parse_args()
 
+# GPU not use
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+
+tf.set_random_seed(777)
 
 # 학습 변수 copy 함수
 def copy_src_to_dst(from_scope, to_scope):
@@ -135,9 +139,9 @@ class A3CNetwork(object):
 
             if self.logdir:
                 tf.summary.scalar("a_pred_max", tf.reduce_mean(tf.reduce_max(self.pred, axis=1)))
-                tf.summary.scalar("policy_loss", _policy_gain)
-                tf.summary.scalar("entropy_loss", _entropy)
-                tf.summary.scalar("value_loss", _value_loss)
+                # tf.summary.scalar("policy_loss", _policy_gain)
+                # tf.summary.scalar("entropy_loss", _entropy)
+                # tf.summary.scalar("value_loss", _value_loss)
                 tf.summary.scalar("total_loss", self.total_loss)
                 tf.summary.histogram("values", self.values)
                 tf.summary.histogram("pred", self.pred)
@@ -235,6 +239,7 @@ class Agent(threading.Thread):
                     self.local.state_in[1]: rnn_state[1]
                 }
                 action_prob, v, rnn_state = self.sess.run([self.local.pred, self.local.values, self.local.state_out], feed_dict=feed)
+
                 action_prob = np.squeeze(action_prob)
                 a = np.random.choice(self.output_dim, size=1, p=action_prob)[0]
 
@@ -317,107 +322,107 @@ def main_train():
     try:
         tf.reset_default_graph()
 
-        with tf.device("/cpu:0"):
-            sess = tf.InteractiveSession()
-            coord = tf.train.Coordinator()
 
-            checkpoint_dir = args.logdir
-            save_path = os.path.join(checkpoint_dir, "model.ckpt")
+        sess = tf.InteractiveSession()
+        coord = tf.train.Coordinator()
 
-            if not os.path.exists(checkpoint_dir):
-                os.makedirs(checkpoint_dir)
-                print("Directory {} was created".format(checkpoint_dir))
+        checkpoint_dir = args.logdir
+        save_path = os.path.join(checkpoint_dir, "model.ckpt")
 
-            # env 환경 파라메터
-            input_size = 60
-            input_shape = [60]
-            output_dim = 3
-            global_network = A3CNetwork(name="global",
-                                        input_size=input_size,
-                                        input_shape=input_shape,
-                                        output_size=output_dim,
-                                        learning_rate=args.learning_rate)
-            thread_list = []
-            env_list = []
+        if not os.path.exists(checkpoint_dir):
+            os.makedirs(checkpoint_dir)
+            print("Directory {} was created".format(checkpoint_dir))
 
-            for id in range(args.n_threads):
-                logdir = args.logdir
+        # env 환경 파라메터
+        input_size = 60
+        input_shape = [60]
+        output_dim = 3
+        global_network = A3CNetwork(name="global",
+                                    input_size=input_size,
+                                    input_shape=input_shape,
+                                    output_size=output_dim,
+                                    learning_rate=args.learning_rate)
+        thread_list = []
+        env_list = []
 
-                env = mini_pacman.Gym(show_game=False)
+        for id in range(args.n_threads):
+            logdir = args.logdir
 
-                single_agent = Agent(env=env,
-                                     session=sess,
-                                     coord=coord,
-                                     id=id,
-                                     global_network=global_network,
-                                     input_size=input_size,
-                                     input_shape=input_shape,
-                                     output_dim=output_dim,
-                                     learning_rate=args.learning_rate,
-                                     update_ep_size=args.update_ep_size,
-                                     logdir=logdir)
+            env = mini_pacman.Gym(show_game=False)
 
-                if id == 0:
-                    single_agent.local.summary_writer.add_graph(sess.graph)
+            single_agent = Agent(env=env,
+                                 session=sess,
+                                 coord=coord,
+                                 id=id,
+                                 global_network=global_network,
+                                 input_size=input_size,
+                                 input_shape=input_shape,
+                                 output_dim=output_dim,
+                                 learning_rate=args.learning_rate,
+                                 update_ep_size=args.update_ep_size,
+                                 logdir=logdir)
 
-                thread_list.append(single_agent)
-                env_list.append(env)
+            if id == 0:
+                single_agent.local.summary_writer.add_graph(sess.graph)
 
-            # 모델 초기화
-            init = tf.global_variables_initializer()
-            sess.run(init)
+            thread_list.append(single_agent)
+            env_list.append(env)
 
-            # saver 설정
-            var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, "global")
-            saver = tf.train.Saver(var_list=var_list)
+        # 모델 초기화
+        init = tf.global_variables_initializer()
+        sess.run(init)
 
-            # Save 파일 있을 경우 복구
-            if tf.train.get_checkpoint_state(checkpoint_dir):
-                read_path = tf.train.latest_checkpoint(checkpoint_dir)
-                saver.restore(sess, read_path)
+        # saver 설정
+        var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, "global")
+        saver = tf.train.Saver(var_list=var_list)
 
-                Agent.global_episode = sess.run(global_network.global_episodes)
-                print("Model restored to global")
-            else:
-                print("No model is found")
+        # Save 파일 있을 경우 복구
+        if tf.train.get_checkpoint_state(checkpoint_dir):
+            read_path = tf.train.latest_checkpoint(checkpoint_dir)
+            saver.restore(sess, read_path)
 
-            # 모델 그래프 최종 확정
-            tf.get_default_graph().finalize()
+            Agent.global_episode = sess.run(global_network.global_episodes)
+            print("Model restored to global")
+        else:
+            print("No model is found")
 
-            print('\nProgram start')
-            print('Learning rate :', args.learning_rate)
+        # 모델 그래프 최종 확정
+        tf.get_default_graph().finalize()
 
-            for t in thread_list:
-                t.start()
-                time.sleep(1)
+        print('\nProgram start')
+        print('Learning rate :', args.learning_rate)
 
-            print("Ctrl + C to close")
+        for t in thread_list:
+            t.start()
+            time.sleep(1)
 
-            div_num = 1000
-            save_idx = int(sess.run(global_network.global_episodes) / div_num)
-            while not coord.should_stop():
-                current_episode = Agent.global_episode
-                sess.run(global_network.update_ep, feed_dict={global_network.input_ep: current_episode})
+        print("Ctrl + C to close")
 
-                temp_idx = int(current_episode / div_num)
-                # Global step XX 회마다 모델 저장
-                if save_idx != temp_idx:
-                    save_idx = temp_idx
+        div_num = 1000
+        save_idx = int(sess.run(global_network.global_episodes) / div_num)
+        while not coord.should_stop():
+            current_episode = Agent.global_episode
+            sess.run(global_network.update_ep, feed_dict={global_network.input_ep: current_episode})
 
-                    saver.save(sess, save_path, global_step=current_episode)
-                    print('Checkpoint Saved to {}'.format(save_path))
+            temp_idx = int(current_episode / div_num)
+            # Global step XX 회마다 모델 저장
+            if save_idx != temp_idx:
+                save_idx = temp_idx
 
-                if current_episode >= args.max_steps:
-                    print("Closing threads")
-                    coord.request_stop()
-                    coord.join(thread_list)
+                saver.save(sess, save_path, global_step=current_episode)
+                print('Checkpoint Saved to {}'.format(save_path), 'Episode :', current_episode)
 
-                # 평균 300점 이상이면 종료
-                if np.mean(Agent.global_reward_list) > 390:
-                    coord.request_stop()
-                    coord.join(thread_list)
+            if current_episode >= args.max_steps:
+                print("Closing threads")
+                coord.request_stop()
+                coord.join(thread_list)
 
-                time.sleep(1)
+            # 평균 300점 이상이면 종료
+            if np.mean(Agent.global_reward_list) > 350:
+                coord.request_stop()
+                coord.join(thread_list)
+
+            time.sleep(1)
 
     except KeyboardInterrupt:
         print("Closing threads")
@@ -433,7 +438,7 @@ def main_train():
     finally:
         current_episode = Agent.global_episode
         saver.save(sess, save_path, global_step=current_episode)
-        print('Checkpoint Saved to {}'.format(save_path))
+        print('Checkpoint Saved to {}'.format(save_path), 'Episode :', current_episode)
 
         sess.close()
 
@@ -464,7 +469,6 @@ def main_test():
         logdir = args.logdir
 
         env = mini_pacman.Gym()
-        env.show_game = True
 
         single_agent = Agent(env=env,
                              session=sess,
@@ -483,11 +487,15 @@ def main_test():
         init = tf.global_variables_initializer()
         sess.run(init)
 
+        # saver 설정
+        var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, "global")
+        saver = tf.train.Saver(var_list=var_list)
+
         # Save 파일 있을 경우 복구
-        if tf.train.get_checkpoint_state(os.path.dirname(save_path)):
-            var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, "global")
-            saver = tf.train.Saver(var_list=var_list)
-            saver.restore(sess, save_path)
+        if tf.train.get_checkpoint_state(checkpoint_dir):
+            read_path = tf.train.latest_checkpoint(checkpoint_dir)
+            saver.restore(sess, read_path)
+
             print("Model restored to global")
         else:
             print("No model is found")

@@ -1,6 +1,5 @@
 import numpy as np
 import tensorflow as tf
-import tensorflow.contrib.slim as slim
 import os
 import threading
 import argparse
@@ -11,7 +10,7 @@ import cv2
 parser = argparse.ArgumentParser(description="Simple 'argparse' demo application")
 parser.add_argument('--mode', default='train', help='Execute mode')
 parser.add_argument('--learning_rate', default=1e-5, type=float)
-parser.add_argument('--logdir', default='./log/4.3_a3c_gridworld_log')
+parser.add_argument('--logdir', default='./log/gridworld_log/a3c_1e-5')
 parser.add_argument('--max_steps', default=1000001, type=int)
 parser.add_argument('--n_threads', default=4, type=int)
 parser.add_argument('--update_ep_size', default=1, type=int)
@@ -19,6 +18,9 @@ parser.add_argument('--env_size', default=5, type=int)
 parser.add_argument('--max_ep_steps', default=50, type=int)
 
 args = parser.parse_args()
+
+# GPU not use
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 # env 환경 파라메터
 input_size = 42 * 42 * 3
@@ -93,53 +95,70 @@ class A3CNetwork(object):
             _imageIn = tf.reshape(self.states, shape=[-1, *self.input_shape])
 
             # 콘볼루션을 통해 이미지 인코딩
-            net = slim.conv2d(inputs=_imageIn, num_outputs=32, kernel_size=[8, 8], stride=[4, 4],
-                              activation_fn=tf.nn.elu)
-            net = slim.conv2d(inputs=net, num_outputs=64, kernel_size=[4, 4], stride=[2, 2], activation_fn=tf.nn.elu)
-            net = slim.conv2d(inputs=net, num_outputs=128, kernel_size=[3, 3], stride=[2, 2], activation_fn=tf.nn.elu)
+            with tf.variable_scope('Conv'):
+                net = tf.layers.conv2d(inputs=_imageIn, filters=32, kernel_size=[8, 8], strides=[4, 4], padding='same',
+                                       activation=tf.nn.elu)  # 11, 11
+                net = tf.layers.conv2d(inputs=net, filters=64, kernel_size=[4, 4], strides=[2, 2], padding='same',
+                                       activation=tf.nn.elu)  # 6, 6
+                net = tf.layers.conv2d(inputs=net, filters=128, kernel_size=[3, 3], strides=[2, 2], padding='same',
+                                       activation=None)  # 3, 3
+
+            # Normalization
+            net = tf.layers.batch_normalization(inputs=net)
+            net = tf.nn.elu(net)
 
             # Inception block
             # input : [3, 3, 128]
             # output : [3, 3, 256]
             with tf.variable_scope('inception1'):
-                branch_0 = slim.conv2d(inputs=net, num_outputs=64, kernel_size=[1, 1], activation_fn=tf.nn.elu)
+                branch_0 = tf.layers.conv2d(inputs=net, filters=64, kernel_size=[1, 1], activation=tf.nn.elu)
 
-                branch_1 = slim.conv2d(inputs=net, num_outputs=32, kernel_size=[1, 1], activation_fn=tf.nn.elu)
-                branch_1 = slim.conv2d(inputs=branch_1, num_outputs=64, kernel_size=[3, 3], activation_fn=tf.nn.elu)
+                branch_1 = tf.layers.conv2d(inputs=net, filters=32, kernel_size=[1, 1], activation=tf.nn.elu)
+                branch_1 = tf.layers.conv2d(inputs=branch_1, filters=64, kernel_size=[3, 3], activation=tf.nn.elu,
+                                            padding='same')
 
-                branch_2 = slim.conv2d(inputs=net, num_outputs=16, kernel_size=[1, 1], activation_fn=tf.nn.elu)
-                branch_2 = slim.conv2d(inputs=branch_2, num_outputs=32, kernel_size=[3, 1], activation_fn=tf.nn.elu)
-                branch_2 = slim.conv2d(inputs=branch_2, num_outputs=64, kernel_size=[1, 3], activation_fn=tf.nn.elu)
+                branch_2 = tf.layers.conv2d(inputs=net, filters=16, kernel_size=[1, 1], activation=tf.nn.elu)
+                branch_2 = tf.layers.conv2d(inputs=branch_2, filters=32, kernel_size=[3, 1], activation=tf.nn.elu,
+                                            padding='same')
+                branch_2 = tf.layers.conv2d(inputs=branch_2, filters=64, kernel_size=[1, 3], activation=tf.nn.elu,
+                                            padding='same')
 
-                branch_3 = slim.max_pool2d(inputs=net, kernel_size=[3, 3], stride=1, padding='same')
-                branch_3 = slim.conv2d(inputs=branch_3, num_outputs=64, kernel_size=[1, 1], activation_fn=tf.nn.elu)
+                branch_3 = tf.layers.max_pooling2d(inputs=net, pool_size=[3, 3], strides=1, padding='same')
+                branch_3 = tf.layers.conv2d(inputs=branch_3, filters=64, kernel_size=[1, 1], activation=tf.nn.elu)
 
                 net = tf.concat(axis=3, values=[branch_0, branch_1, branch_2, branch_3])
 
             # Inception block
             # output : [3, 3, 416]
             with tf.variable_scope('inception2'):
-                branch_0 = slim.conv2d(inputs=net, num_outputs=96, kernel_size=[1, 1], activation_fn=tf.nn.elu)
+                branch_0 = tf.layers.conv2d(inputs=net, filters=96, kernel_size=[1, 1], activation=tf.nn.elu)
 
-                branch_1 = slim.conv2d(inputs=net, num_outputs=64, kernel_size=[1, 1], activation_fn=tf.nn.elu)
-                branch_1 = slim.conv2d(inputs=branch_1, num_outputs=128, kernel_size=[3, 3], activation_fn=tf.nn.elu)
+                branch_1 = tf.layers.conv2d(inputs=net, filters=64, kernel_size=[1, 1], activation=tf.nn.elu)
+                branch_1 = tf.layers.conv2d(inputs=branch_1, filters=128, kernel_size=[3, 3], activation=tf.nn.elu,
+                                            padding='same')
 
-                branch_2 = slim.conv2d(inputs=net, num_outputs=32, kernel_size=[1, 1], activation_fn=tf.nn.elu)
-                branch_2 = slim.conv2d(inputs=branch_2, num_outputs=64, kernel_size=[3, 1], activation_fn=tf.nn.elu)
-                branch_2 = slim.conv2d(inputs=branch_2, num_outputs=128, kernel_size=[1, 3], activation_fn=tf.nn.elu)
+                branch_2 = tf.layers.conv2d(inputs=net, filters=32, kernel_size=[1, 1], activation=tf.nn.elu)
+                branch_2 = tf.layers.conv2d(inputs=branch_2, filters=64, kernel_size=[3, 1], activation=tf.nn.elu,
+                                            padding='same')
+                branch_2 = tf.layers.conv2d(inputs=branch_2, filters=128, kernel_size=[1, 3], activation=tf.nn.elu,
+                                            padding='same')
 
-                branch_3 = slim.max_pool2d(inputs=net, kernel_size=[3, 3], stride=1, padding='same')
-                branch_3 = slim.conv2d(inputs=branch_3, num_outputs=64, kernel_size=[1, 1])
+                branch_3 = tf.layers.max_pooling2d(inputs=net, pool_size=[3, 3], strides=1, padding='same')
+                branch_3 = tf.layers.conv2d(inputs=branch_3, filters=64, kernel_size=[1, 1], activation=tf.nn.elu)
 
                 net = tf.concat(axis=3, values=[branch_0, branch_1, branch_2, branch_3])
 
-            net = slim.max_pool2d(inputs=net, kernel_size=[3, 3])
+            net = tf.layers.max_pooling2d(inputs=net, pool_size=[3, 3], strides=1)
             net = tf.contrib.layers.flatten(net)
-            _dense = slim.fully_connected(net, 512, activation_fn=tf.nn.elu)
+            net = tf.layers.dense(inputs=net, units=512)
+
+            # Normalization
+            net = tf.layers.batch_normalization(inputs=net)
+            net = tf.nn.elu(net)
 
             # LSTM
             _rnn_out_size = 256
-            _rnn_in = tf.expand_dims(_dense, [0])
+            _rnn_in = tf.expand_dims(net, [0])
             lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(num_units=_rnn_out_size, state_is_tuple=True)
             # cell 초기화
             c_init = np.zeros((1, lstm_cell.state_size.c), np.dtype(float))
@@ -160,11 +179,14 @@ class A3CNetwork(object):
             lstm_c, lstm_h = lstm_state
             self.state_out = (lstm_c[:1, :], lstm_h[:1, :])
             # 최종을 다시 벡터화
-            rnn_out = tf.reshape(lstm_outputs, [-1, _rnn_out_size])
+            net = tf.reshape(lstm_outputs, [-1, _rnn_out_size])
+
+            # Normalization
+            net = tf.layers.batch_normalization(inputs=net)
 
             # Output
-            self.pred = tf.layers.dense(inputs=rnn_out, units=self.output_size, activation=tf.nn.softmax, name='pred')
-            self.values = tf.squeeze(tf.layers.dense(inputs=rnn_out, units=1, name="values"))
+            self.pred = tf.layers.dense(inputs=net, units=self.output_size, activation=tf.nn.softmax, name='pred')
+            self.values = tf.squeeze(tf.layers.dense(inputs=net, units=1, name="values"))
 
             # Loss 계산
             _policy_gain = -tf.reduce_sum(tf.log(self.pred + 1e-5) * self.actions, axis=1) * self.advantages
@@ -178,9 +200,9 @@ class A3CNetwork(object):
 
             if self.logdir:
                 tf.summary.scalar("a_pred_max", tf.reduce_mean(tf.reduce_max(self.pred, axis=1)))
-                tf.summary.scalar("policy_loss", _policy_gain)
-                tf.summary.scalar("entropy_loss", _entropy)
-                tf.summary.scalar("value_loss", _value_loss)
+                # tf.summary.scalar("policy_loss", _policy_gain)
+                # tf.summary.scalar("entropy_loss", _entropy)
+                # tf.summary.scalar("value_loss", _value_loss)
                 tf.summary.scalar("total_loss", self.total_loss)
                 tf.summary.histogram("values", self.values)
                 tf.summary.histogram("pred", self.pred)
@@ -274,7 +296,7 @@ class Agent(threading.Thread):
             while not done:
                 episode_step += 1
 
-                # Episode별 100회 이상되면 종료
+                # Episode별 XX회 이상되면 종료
                 if episode_step > Agent.max_ep_steps:
                     break
 
@@ -319,8 +341,7 @@ class Agent(threading.Thread):
 
         # 러닝 시간
         duration = time.time() - start_time
-        sec_per_step = float(duration + 1e-6)
-        frame_sec = float(len(episode_buffer)) / sec_per_step
+        frame_sec = episode_step / float(duration + 1e-6)
 
         self.print(np.mean(reward_list), avg_reward, frame_sec)
 
@@ -365,98 +386,103 @@ def main_train():
     try:
         tf.reset_default_graph()
 
-        with tf.device("/cpu:0"):
-            sess = tf.InteractiveSession()
-            coord = tf.train.Coordinator()
+        sess = tf.InteractiveSession()
+        coord = tf.train.Coordinator()
 
-            checkpoint_dir = args.logdir
-            save_path = os.path.join(checkpoint_dir, "model.ckpt")
+        checkpoint_dir = args.logdir
+        save_path = os.path.join(checkpoint_dir, "model.ckpt")
 
-            if not os.path.exists(checkpoint_dir):
-                os.makedirs(checkpoint_dir)
-                print("Directory {} was created".format(checkpoint_dir))
+        if not os.path.exists(checkpoint_dir):
+            os.makedirs(checkpoint_dir)
+            print("Directory {} was created".format(checkpoint_dir))
 
-            # Global network 생성
-            global_network = A3CNetwork(name="global",
-                                        input_size=input_size,
-                                        input_shape=input_shape,
-                                        output_size=output_dim,
-                                        learning_rate=args.learning_rate)
-            thread_list = []
-            env_list = []
+        # Global network 생성
+        global_network = A3CNetwork(name="global",
+                                    input_size=input_size,
+                                    input_shape=input_shape,
+                                    output_size=output_dim,
+                                    learning_rate=args.learning_rate)
+        thread_list = []
+        env_list = []
 
-            # Thread agent 생성
-            for id in range(args.n_threads):
-                logdir = args.logdir
+        # Thread agent 생성
+        for id in range(args.n_threads):
+            logdir = args.logdir
 
-                env = gameEnv(partial=False, size=args.env_size)
-                # env = gym.make("PongDeterministic-v0")
+            env = gameEnv(partial=False, size=args.env_size)
+            # env = gym.make("PongDeterministic-v0")
 
-                single_agent = Agent(env=env,
-                                     session=sess,
-                                     coord=coord,
-                                     id=id,
-                                     global_network=global_network,
-                                     input_size=input_size,
-                                     input_shape=input_shape,
-                                     output_dim=output_dim,
-                                     learning_rate=args.learning_rate,
-                                     update_ep_size=args.update_ep_size,
-                                     logdir=logdir)
-                single_agent.max_ep_steps = args.max_ep_steps
+            single_agent = Agent(env=env,
+                                 session=sess,
+                                 coord=coord,
+                                 id=id,
+                                 global_network=global_network,
+                                 input_size=input_size,
+                                 input_shape=input_shape,
+                                 output_dim=output_dim,
+                                 learning_rate=args.learning_rate,
+                                 update_ep_size=args.update_ep_size,
+                                 logdir=logdir)
+            single_agent.max_ep_steps = args.max_ep_steps
 
-                if id == 0:
-                    single_agent.local.summary_writer.add_graph(sess.graph)
+            if id == 0:
+                single_agent.local.summary_writer.add_graph(sess.graph)
 
-                thread_list.append(single_agent)
-                env_list.append(env)
+            thread_list.append(single_agent)
+            env_list.append(env)
 
-            # 모델 초기화
-            init = tf.global_variables_initializer()
-            sess.run(init)
+        # 모델 초기화
+        init = tf.global_variables_initializer()
+        sess.run(init)
 
-            # saver 설정
-            var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, "global")
-            saver = tf.train.Saver(var_list=var_list)
+        # saver 설정
+        var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, "global")
+        saver = tf.train.Saver(var_list=var_list)
 
-            # Save 파일 있을 경우 복구
-            if tf.train.get_checkpoint_state(checkpoint_dir):
-                read_path = tf.train.latest_checkpoint(checkpoint_dir)
-                saver.restore(sess, read_path)
+        # Save 파일 있을 경우 복구
+        if tf.train.get_checkpoint_state(checkpoint_dir):
+            read_path = tf.train.latest_checkpoint(checkpoint_dir)
+            saver.restore(sess, read_path)
 
-                Agent.global_episode = sess.run(global_network.global_episodes)
-                print("Model restored to global")
-            else:
-                print("No model is found")
+            Agent.global_episode = sess.run(global_network.global_episodes)
+            print("Model restored to global")
+        else:
+            print("No model is found")
 
-            # Thread Start
-            for t in thread_list:
-                t.start()
-                time.sleep(1)
+        # 모델 그래프 최종 확정
+        tf.get_default_graph().finalize()
 
-            print("Ctrl + C to close")
+        print('\nProgram start')
+        print('Learning rate :', args.learning_rate)
 
-            # Save step 설정
-            div_num = 1000
-            save_idx = int(sess.run(global_network.global_episodes) / div_num)
+        # Thread Start
+        for t in thread_list:
+            t.start()
+            time.sleep(1)
 
-            while not coord.should_stop():
-                current_episode = Agent.global_episode
-                sess.run(global_network.update_ep, feed_dict={global_network.input_ep: current_episode})
-                temp_idx = int(current_episode / div_num)
-                # Global step XX 회마다 모델 저장
-                if save_idx != temp_idx:
-                    save_idx = temp_idx
+        print("Ctrl + C to close")
 
-                    saver.save(sess, save_path, global_step=current_episode)
-                    print('Checkpoint Saved to {}'.format(save_path))
+        # Save step 설정
+        div_num = 1000
+        save_idx = int(sess.run(global_network.global_episodes) / div_num)
 
-                if current_episode >= args.max_steps:
-                    print("Closing threads")
-                    coord.request_stop()
-                    coord.join(thread_list)
+        while not coord.should_stop():
+            current_episode = Agent.global_episode
+            sess.run(global_network.update_ep, feed_dict={global_network.input_ep: current_episode})
+            temp_idx = int(current_episode / div_num)
+            # Global step XX 회마다 모델 저장
+            if save_idx != temp_idx:
+                save_idx = temp_idx
 
-                time.sleep(2)
+                saver.save(sess, save_path, global_step=current_episode)
+                print('Checkpoint Saved to {}'.format(save_path), 'Episode :', current_episode)
+
+            if current_episode >= args.max_steps:
+                print("Closing threads")
+                coord.request_stop()
+                coord.join(thread_list)
+
+            time.sleep(2)
 
     except KeyboardInterrupt:
         print("Closing threads")
@@ -471,8 +497,9 @@ def main_train():
                 pass
 
     finally:
-        saver.save(sess, save_path)
-        print('Checkpoint Saved to {}'.format(save_path))
+        current_episode = Agent.global_episode
+        saver.save(sess, save_path, global_step=current_episode)
+        print('Checkpoint Saved to {}'.format(save_path), 'Episode :', current_episode)
 
         sess.close()
 
