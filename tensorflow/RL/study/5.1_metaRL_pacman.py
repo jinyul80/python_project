@@ -7,12 +7,12 @@ import threading
 import argparse
 import time
 
-import mini_pacman2 as mini_pacman
+import mini_pacman as mini_pacman
 
 parser = argparse.ArgumentParser(description="Simple 'argparse' demo application")
 parser.add_argument('--mode', default='train', help='Execute mode')
 parser.add_argument('--learning_rate', default=1e-3, type=float)
-parser.add_argument('--logdir', default='./log/pacman2/metaRL_1e-3')
+parser.add_argument('--logdir', default='./log/pacman2/metaRL_1e-3_256batch')
 parser.add_argument('--max_steps', default=10001, type=int)
 parser.add_argument('--n_threads', default=4, type=int)
 parser.add_argument('--update_ep_size', default=1, type=int)
@@ -195,9 +195,9 @@ class Agent(threading.Thread):
         self.is_training = is_training
 
     # Episode 결과 출력
-    def print(self, reward, avg_reward, frame_sec):
-        message = "Episode : {} , Agent(name={}, reward= {:.2f}, avg= {:.2f}) ({:.2f} sec)".format(self.local_episode,
-                                                     self.name, reward, avg_reward, frame_sec)
+    def print(self, reward, avg_reward, frame_sec, frame_count):
+        message = "Episode : {} , Agent(name={}, reward= {:.2f}, avg= {:.2f}, frame= {:d} ({:.2f} frame/sec)".format(self.local_episode,
+                                                     self.name, reward, avg_reward, frame_count, frame_sec)
         print(message)
 
     # State 전처리
@@ -291,21 +291,17 @@ class Agent(threading.Thread):
         frame_sec = episode_step / float(duration + 1e-6)
 
 
-        self.print(np.mean(reward_list), avg_reward, frame_sec)
+        self.print(np.mean(reward_list), avg_reward, frame_sec, len(episode_buffer))
 
     # Model 학습
     def train(self, buffer):
 
-        buffer = np.reshape(buffer, [-1, 4])
-        xs = np.vstack(buffer[:, 0])
-        ys = np.vstack(buffer[:, 1])
-        train_rewards = buffer[:, 2]
-        values = buffer[:, 3]
+        new_buffer = np.array(buffer)
 
-        prev_r = np.vstack([0] + train_rewards[:-1].tolist())
-        prev_a = np.vstack([np.zeros(3), ys[:-1].tolist()])
-
-        rnn_state = self.local.state_init
+        xs = np.array(new_buffer[:, 0])
+        ys = new_buffer[:, 1]
+        train_rewards = new_buffer[:, 2]
+        values = new_buffer[:, 3]
 
         discount_rewards = calc_discount_rewards(train_rewards)
         discount_rewards -= np.mean(discount_rewards)
@@ -315,23 +311,48 @@ class Agent(threading.Thread):
         advantage -= np.mean(advantage)
         advantage /= np.std(advantage) + 1e-8
 
-        feed = {
-            self.local.states: xs,
-            self.local.actions: ys,
-            self.local.rewards: discount_rewards,
-            self.local.advantages: advantage,
-            self.local.state_in[0]: rnn_state[0],
-            self.local.state_in[1]: rnn_state[1],
-            self.local.prev_rewards: prev_r,
-            self.local.prev_actions: prev_a,
-            self.local.reward_avg: np.mean(Agent.global_reward_list)
-        }
+        prev_r = np.hstack([np.zeros(1), train_rewards[:-1]])
+        prev_a = np.vstack([np.zeros((1, 3)), ys[:-1].tolist()])
 
-        if self.id == 0:
-            summ, _ = self.sess.run([self.local.summary_op, self.local.apply_grads], feed)
-            self.local.summary_writer.add_summary(summ, global_step=self.local_episode)
-        else:
-            self.sess.run(self.local.apply_grads, feed)
+        new_buffer = []
+
+        for i in range(0, len(buffer)):
+            new_buffer.append([xs[i], ys[i], discount_rewards[i], values[i], advantage[i], prev_r[i], prev_a[i]])
+
+        batch_size = 256
+        rnn_state = self.local.state_init
+
+        for i in range(0, len(new_buffer), batch_size):
+            mini_batch = new_buffer[i:i + batch_size]
+            batch_buffer = np.array(mini_batch)
+            xs = np.vstack(batch_buffer[:, 0])
+            ys = np.vstack(batch_buffer[:, 1])
+
+            discount_rewards = batch_buffer[:, 2]
+            values = batch_buffer[:, 3]
+
+            advantage = batch_buffer[:, 4]
+
+            prev_r = np.vstack(batch_buffer[:, 5])
+            prev_a = np.vstack(batch_buffer[:, 6])
+
+            feed = {
+                self.local.states: xs,
+                self.local.actions: ys,
+                self.local.rewards: discount_rewards,
+                self.local.advantages: advantage,
+                self.local.state_in[0]: rnn_state[0],
+                self.local.state_in[1]: rnn_state[1],
+                self.local.prev_rewards: prev_r,
+                self.local.prev_actions: prev_a,
+                self.local.reward_avg: np.mean(Agent.global_reward_list)
+            }
+
+            if self.id == 0:
+                summ, _, rnn_state = self.sess.run([self.local.summary_op, self.local.apply_grads, self.local.state_out], feed)
+                self.local.summary_writer.add_summary(summ, global_step=self.local_episode)
+            else:
+                _, rnn_state = self.sess.run([self.local.apply_grads, self.local.state_out], feed)
 
 
 # 학습용 method
