@@ -3,10 +3,10 @@ PUSHD %~DP0
 
 TITLE "Tensorflow distribute program"
 
-SET WORKER_NUM=1
-SET FOR_NUM=0
+SET FOR_NUM=6
 
-for /l %%a in (0, 1, 1) do start python 7.1_a3c_gridworld_distibute.py --job_name=ps --worker_hosts_num=%WORKER_NUM% --task_index=%%a
-sleep 10
+start python 7.1_a3c_gridworld_distribute.py --job_name=ps --task_index=0
 
-for /l %%a in (0,1,%FOR_NUM%) do start python 7.1_a3c_gridworld_distibute.py --job_name=worker --worker_hosts_num=%WORKER_NUM% --task_index=%%a
+timeout /t 10
+
+for /l %%a in (0,1,%FOR_NUM%) do start python 7.1_a3c_gridworld_distribute.py --job_name=worker --task_index=%%a && timeout /t 2

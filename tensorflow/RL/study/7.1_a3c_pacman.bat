@@ -3,11 +3,11 @@ PUSHD %~DP0
 
 TITLE "Tensorflow distribute program"
 
-SET WORKER_NUM=3
-SET FOR_NUM=2
+SET FOR_NUM=5
 
-start python 7.1_a3c_pacman_distibute.py --job_name=ps --worker_hosts_num=%WORKER_NUM%
-sleep 10
+start python 7.1_a3c_pacman_distribute.py --job_name=ps
 
-for /l %%a in (0,1,%FOR_NUM%) do start python 7.1_a3c_pacman_distibute.py --job_name=worker --worker_hosts_num=%WORKER_NUM% --task_index=%%a
+timeout /t 10
+
+for /l %%a in (0,1,%FOR_NUM%) do start python 7.1_a3c_pacman_distribute.py --job_name=worker --task_index=%%a && timeout /t 1
 

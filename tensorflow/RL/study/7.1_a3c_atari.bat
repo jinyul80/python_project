@@ -3,10 +3,10 @@ PUSHD %~DP0
 
 TITLE "Tensorflow distribute program"
 
-SET WORKER_NUM=3
-SET FOR_NUM=2
+SET FOR_NUM=6
 
-start python 7.1_a3c_atari_distibute.py --job_name=ps --worker_hosts_num=%WORKER_NUM%
-sleep 10
+for /l %%a in (0,1,0) do start python 7.1_a3c_atari_distribute.py --job_name=ps --task_index=%%a
 
-for /l %%a in (0,1,%FOR_NUM%) do start python 7.1_a3c_atari_distibute.py --job_name=worker --worker_hosts_num=%WORKER_NUM% --task_index=%%a
+timeout /t 10
+
+for /l %%a in (0,1,%FOR_NUM%) do start python 7.1_a3c_atari_distribute.py --job_name=worker --task_index=%%a && timeout /t 1

@@ -13,15 +13,61 @@ os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 parser = argparse.ArgumentParser(description="Simple 'argparse' demo application")
 parser.add_argument('--mode', default='train', help='Execute mode')
 parser.add_argument('--learning_rate', default=1e-3, type=float)
-parser.add_argument('--logdir', default='./log/7.1_a3c_pacman_log')
-parser.add_argument('--max_steps', default=1000001, type=int)
-parser.add_argument('--worker_hosts_num', default=5, type=int)
-parser.add_argument('--ps_hosts', type=str, default='localhost:49000',
-                    help="Comma-separated list of hostname:port pairs")
+parser.add_argument('--logdir', default='./log/7.1_a3c_pacman_log/new')
+parser.add_argument('--max_steps', default=5001, type=int)
+parser.add_argument('--worker_hosts_num', default=10, type=int)
 parser.add_argument('--job_name', type=str, help="One of 'ps', 'worker'")
 parser.add_argument('--task_index', type=int, default=0, help="Index of task within the job")
 
 args = parser.parse_args()
+
+# GPU not use
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+
+tf.logging.set_verbosity(tf.logging.ERROR)
+
+def cluster_spec(num_workers, num_ps):
+    """
+    Tensorflow 분산 환경 설정
+    """
+    cluster = {}
+
+    # Parameter server
+    all_ps = []
+
+    port = 49000
+    host = '192.168.1.253'
+    for _ in range(num_ps):
+        all_ps.append('{}:{}'.format(host, port))
+        port += 1
+    cluster['ps'] = all_ps
+
+    # Worker
+    all_workers = []
+
+    # PC1
+    port = 49100
+    host = '192.168.1.253'
+    for _ in range(num_workers):
+        all_workers.append('{}:{}'.format(host, port))
+        port += 1
+
+    # PC2
+    port = 49100
+    host = '192.168.1.252'
+    for _ in range(num_workers):
+        all_workers.append('{}:{}'.format(host, port))
+        port += 1
+
+    # PC3
+    port = 49100
+    host = '192.168.1.251'
+    for _ in range(num_workers):
+        all_workers.append('{}:{}'.format(host, port))
+        port += 1
+
+    cluster['worker'] = all_workers
+    return cluster
 
 
 # 보상 배열을 감쇠 적용
@@ -57,16 +103,25 @@ class A3CNetwork(object):
             self.advantages = tf.placeholder(tf.float32, [None], name="advantages")
             self.rewards = tf.placeholder(tf.float32, [None], name="reward")
 
-            # conv2d 처리를 위해 84x84x3 으로 다시 리사이즈
+            self.prev_rewards = tf.placeholder(shape=[None, 1], dtype=tf.float32, name='prev_rewards')
+            self.prev_actions = tf.placeholder(shape=[None, self.output_size], dtype=tf.float32, name='prev_actions')
+
             _imageIn = tf.reshape(self.states, shape=[-1, *self.input_shape])
 
             # Dense 레이어
-            _dense = tf.layers.dense(inputs=_imageIn, units=128, activation=tf.nn.relu)
-            _dense = tf.layers.dense(inputs=_dense, units=64, activation=tf.nn.relu)
+            net = tf.layers.dense(inputs=_imageIn, units=256, activation=tf.nn.relu)
+            net = tf.layers.dense(inputs=net, units=128)
+
+            # Normalization
+            net = tf.layers.batch_normalization(inputs=net)
+            net = tf.nn.relu(net)
+
+            # Concat Prev rewards, actions
+            net = tf.concat(axis=1, values=[net, self.prev_rewards, self.prev_actions])
 
             # LSTM
-            _rnn_out_size = 32
-            _rnn_in = tf.expand_dims(_dense, [0])
+            _rnn_out_size = 128
+            _rnn_in = tf.expand_dims(net, [0])
             lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(num_units=_rnn_out_size, state_is_tuple=True)
             # cell 초기화
             c_init = np.zeros((1, lstm_cell.state_size.c), np.float32)
@@ -87,29 +142,30 @@ class A3CNetwork(object):
             lstm_c, lstm_h = lstm_state
             self.state_out = (lstm_c[:1, :], lstm_h[:1, :])
             # 최종을 다시 벡터화
-            rnn_out = tf.reshape(lstm_outputs, [-1, _rnn_out_size])
+            net = tf.reshape(lstm_outputs, [-1, _rnn_out_size])
+
+            # Normalization
+            net = tf.layers.batch_normalization(inputs=net)
 
             # Output
-            self.pred = tf.layers.dense(inputs=rnn_out, units=self.output_size, activation=tf.nn.softmax, name='pred')
-            self.values = tf.squeeze(tf.layers.dense(inputs=rnn_out, units=1, name="values"))
+            self.pred = tf.layers.dense(inputs=net, units=self.output_size, activation=tf.nn.softmax, name='pred')
+            self.values = tf.squeeze(tf.layers.dense(inputs=net, units=1, name="values"))
 
-            if self.name != 'global':
-                # Loss 계산
-                _policy_gain = -tf.reduce_sum(tf.log(self.pred + 1e-5) * self.actions, axis=1) * self.advantages
-                _policy_gain = tf.reduce_mean(_policy_gain)
-                _entropy = - tf.reduce_sum(self.pred * tf.log(self.pred + 1e-5), axis=1)
-                _entropy = tf.reduce_mean(_entropy)
-                _value_loss = tf.losses.mean_squared_error(self.values, self.rewards, scope="value_loss")
+            # Loss 계산
+            _policy_gain = -tf.reduce_sum(tf.log(self.pred + 1e-5) * self.actions, axis=1) * self.advantages
+            _policy_gain = tf.reduce_mean(_policy_gain)
+            _entropy = - tf.reduce_sum(self.pred * tf.log(self.pred + 1e-5), axis=1)
+            _entropy = tf.reduce_mean(_entropy)
+            _value_loss = tf.losses.mean_squared_error(self.values, self.rewards, scope="value_loss")
 
-                self.total_loss = _policy_gain + (_value_loss * 0.5) - (_entropy * 0.01)
+            self.total_loss = _policy_gain + (_value_loss * 0.5) - (_entropy * 0.01)
 
             self.var_list = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=self.name)
 
 
 class Agent():
-    global_reward_list = []  # 100개 까지 저장
 
-    def __init__(self, env, id, input_size, input_shape, output_dim, learning_rate, cluster, is_training=True):
+    def __init__(self, id, input_size, input_shape, output_dim, learning_rate, cluster, is_training=True):
         super(Agent, self).__init__()
 
         self.id = id
@@ -117,9 +173,11 @@ class Agent():
         self.input_size = input_size
         self.input_shape = input_shape
         self.output_dim = output_dim
-        self.env = env
+        self.env = mini_pacman.Gym(show_game=False)
 
         self.is_training = is_training
+
+        self.reward_list_size = 100
 
         worker_device = "/job:worker/task:%d" % id
         replica_device = tf.train.replica_device_setter(
@@ -130,24 +188,31 @@ class Agent():
         # Global network
         with tf.device(replica_device):
             self.global_network = A3CNetwork('global', input_size, input_shape, output_dim, learning_rate)
-            self.global_step = tf.Variable(0, name="global_step", trainable=False)
-            self.global_step_op = self.global_step.assign_add(1)
+
+            self.global_step = tf.train.get_or_create_global_step()
+            self.global_step_add = self.global_step.assign_add(1)
+
+            self.reward_list = tf.Variable(tf.zeros([self.reward_list_size]), trainable=False, dtype=tf.float32,
+                                           name='reward_list')
+            self.reward_in = tf.placeholder(dtype=tf.float32, shape=[self.reward_list_size], name='reward')
+            self.reward_add_op = self.reward_list.assign(self.reward_in)
 
         # Local network
         with tf.device(worker_device):
             self.local = A3CNetwork('local', input_size, input_shape, output_dim, learning_rate)
 
-        # Weight sync global to local
-        self.sync_op = tf.group(*[v1.assign(v2) for v1, v2 in zip(self.local.var_list, self.global_network.var_list)])
+            grads = tf.gradients(self.local.total_loss, self.local.var_list)
+            grads, _ = tf.clip_by_global_norm(grads, 40.0)
 
         # Train op
-        grads = tf.gradients(self.local.total_loss, self.local.var_list)
-        grads, _ = tf.clip_by_global_norm(grads, 40.0)
-
         grads_and_vars = list(zip(grads, self.global_network.var_list))
 
         opt = tf.train.AdamOptimizer(learning_rate=learning_rate)
         self.train_op = opt.apply_gradients(grads_and_vars)
+
+        # Weight sync global to local
+        self.sync_op = tf.group(
+            *[v1.assign(v2) for v1, v2 in zip(self.local.var_list, self.global_network.var_list)])
 
     # State 전처리
     def preProcessState(self, states):
@@ -156,6 +221,12 @@ class Agent():
     def play_episode(self, sess):
         # Set episode start time
         start_time = time.time()
+
+        step = sess.run(self.global_step)
+        sess.run(self.global_step_add)
+
+        # Variable 동기화
+        sess.run(self.sync_op)
 
         s = self.env.reset()
         s = self.preProcessState(s)
@@ -169,6 +240,9 @@ class Agent():
 
         rnn_state = self.local.state_init
 
+        r = 0
+        action_one_hot = np.zeros(self.output_dim)
+
         while not done:
             episode_step += 1
 
@@ -176,7 +250,9 @@ class Agent():
             feed = {
                 self.local.states: [s],
                 self.local.state_in[0]: rnn_state[0],
-                self.local.state_in[1]: rnn_state[1]
+                self.local.state_in[1]: rnn_state[1],
+                self.local.prev_rewards: [[r]],
+                self.local.prev_actions: [action_one_hot]
             }
             action_prob, v, rnn_state = sess.run([self.local.pred, self.local.values, self.local.state_out],
                                                  feed_dict=feed)
@@ -202,10 +278,13 @@ class Agent():
                 break
 
         # Episode 보상 출력 및 global에 기록
-        Agent.global_reward_list.append(episode_reward)
-        if len(Agent.global_reward_list) > 100:
-            Agent.global_reward_list = Agent.global_reward_list[1:]
-        avg_reward = np.mean(Agent.global_reward_list)
+        r_list = sess.run(self.reward_list)
+        r_list = np.append(r_list, [episode_reward], axis=0)
+        r_list = r_list[1:]
+
+        avg_reward = np.mean(r_list)
+
+        sess.run(self.reward_add_op, feed_dict={self.reward_in: r_list})
 
         # Traing 모드일 경우 학습
         if self.is_training:
@@ -213,9 +292,9 @@ class Agent():
 
         # 러닝 시간
         duration = time.time() - start_time
-        sec_per_step = float(duration) / episode_step
+        frame_sec = episode_step / float(duration + 1e-6)
 
-        return episode_reward, avg_reward, sec_per_step
+        return step, episode_reward, avg_reward, frame_sec
 
     # Model 학습
     def train(self, sess, buffer):
@@ -225,6 +304,9 @@ class Agent():
         ys = np.vstack(buffer[:, 1])
         train_rewards = buffer[:, 2]
         values = buffer[:, 3]
+
+        prev_r = np.vstack([0] + train_rewards[:-1].tolist())
+        prev_a = np.vstack([np.zeros(self.output_dim), ys[:-1].tolist()])
 
         rnn_state = self.local.state_init
 
@@ -243,6 +325,8 @@ class Agent():
             self.local.advantages: advantage,
             self.local.state_in[0]: rnn_state[0],
             self.local.state_in[1]: rnn_state[1],
+            self.local.prev_rewards: prev_r,
+            self.local.prev_actions: prev_a
         }
 
         _ = sess.run(self.train_op, feed)
@@ -251,19 +335,9 @@ class Agent():
 # 학습용 method
 def main_train():
 
-    ps_hosts = args.ps_hosts.split(",")
-    worker_hosts = []
-
-    port_num = 49100
-
-    for i in range(args.worker_hosts_num):
-        worker_hosts.append("localhost:" + str(port_num))
-        port_num += 1
-    ps_hosts = list(ps_hosts)
-    worker_hosts = list(worker_hosts)
-
-    # Create a cluster from the parameter server and worker hosts.
-    cluster = tf.train.ClusterSpec({"ps": ps_hosts, "worker": worker_hosts})
+    # Network
+    spec = cluster_spec(args.worker_hosts_num, 1)
+    cluster = tf.train.ClusterSpec(spec)
 
     # Create and start a server for the local task.
     server = tf.train.Server(cluster,
@@ -282,94 +356,67 @@ def main_train():
         input_shape = [60]
         output_dim = 3
 
-        env = mini_pacman.Gym(show_game=False)
-
-        single_agent = Agent(env=env,
-                             id=args.task_index,
+        single_agent = Agent(id=args.task_index,
                              input_size=input_size,
                              input_shape=input_shape,
                              output_dim=output_dim,
                              learning_rate=args.learning_rate,
                              cluster=cluster)
 
-        saver_var_list = tf.get_collection(tf.GraphKeys.VARIABLES, scope='global')
+        is_chief = (args.task_index == 0)
+
+        # Initializer
+        local_variables = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='local')
+        local_init_op = tf.variables_initializer(local_variables)
+
+        saver_var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='global')
         saver = tf.train.Saver(var_list=saver_var_list)
 
-        variables_to_save = [v for v in tf.global_variables() if not v.name.startswith("local")]
-        init_op = tf.variables_initializer(variables_to_save)
-        init_all_op = tf.global_variables_initializer()
+        sess_config = tf.ConfigProto(device_filters=["/job:ps", "/job:worker/task:%d" % args.task_index])
 
-        is_chief = (args.task_index == 0)
-        # 훈련 과정을 살펴보기 위해 "supervisor"를 생성한다.
-        # summary와 placeholder 에러 발생으로 summary_op는 None 처리.
-        # 차후 일정 주기마다 수동으로 summary 실행
         sv = tf.train.Supervisor(is_chief=is_chief,
                                  logdir=args.logdir,
-                                 init_op=init_op,
-                                 local_init_op=init_all_op,
-                                 summary_op=None,
+                                 init_op=tf.global_variables_initializer(),
+                                 local_init_op=local_init_op,
                                  saver=saver,
-                                 save_model_secs=0,
+                                 summary_op=None,
+                                 save_model_secs=300,
                                  global_step=single_agent.global_step)
 
-        # supervisor는 세션 초기화를 관리하고, checkpoint로부터 모델을 복원하고
-        # 에러가 발생하거나 연산이 완료되면 프로그램을 종료한다.
-        sess_config = tf.ConfigProto(
-            log_device_placement=False,
-            device_filters=["/job:ps", "/job:worker/task:%d" % args.task_index])
-
-        fName = os.path.join(args.logdir, "model.ckpt")
-        saveIdx = 0
-
         with sv.managed_session(server.target, config=sess_config) as sess:
-            # "supervisor"가 종료되거나 MAX_LOOP step이 수행 될 때까지 반복한다.
-            local_step = 0
-            step = 0
 
-            if is_chief:
-                # Model restore
-                ckpt = tf.train.get_checkpoint_state(args.logdir)
-                if ckpt and ckpt.model_checkpoint_path:
-                    # Restores from checkpoint
-                    saver.restore(sess, ckpt.model_checkpoint_path)
-                    step = sess.run(single_agent.global_step)
-                    saveIdx = int(step / 1000)
+            # 모델 그래프 최종 확정
+            tf.get_default_graph().finalize()
 
-                    print('model restore... current step :', step)
+            print('Model training starting...')
 
-            while not sv.should_stop() and step < args.max_steps:
-                # 학습 변수 copy
-                sess.run(single_agent.sync_op)
+            before_step = sess.run(tf.train.get_global_step()) - 1
+            before_time = time.time()
 
-                ep_r, avg_r, ep_sec = single_agent.play_episode(sess)
-                step = sess.run(single_agent.global_step_op)
-                message = "Task: {}, Episode: {}, reward= {:.2f}, avg= {:.2f} ({:.5f} sec)".format(args.task_index, step, ep_r, avg_r, ep_sec)
+            while not sv.should_stop():
+                step, ep_r, avg_r, frame_sec = single_agent.play_episode(sess)
+
+                message = "Task: {}, Episode: {}, reward= {:.2f}, avg= {:.2f} ({:.2f} frame/sec)".format(args.task_index, step, ep_r, avg_r, frame_sec)
                 print(message)
 
-                if is_chief and step != 0:
+                n_step = step - before_step
+                e_time = time.time()
+                step_per_sec = n_step / float((e_time - before_time) + 1e-6)
+
+                before_step = step
+                before_time = e_time
+
+                if is_chief:
                     summary = tf.Summary()
-                    summary.value.add(tag='Reward_avg', simple_value=float(avg_r))
+                    summary.value.add(tag='avg_reward', simple_value=float(avg_r))
+                    # summary.value.add(tag='frame/sec', simple_value=float(frame_sec))
+                    summary.value.add(tag='step/sec', simple_value=float(step_per_sec))
                     sv.summary_computed(sess, summary, global_step=step)
 
-                    # Global step 기준으로 1000 step마다 model save
-                    if saveIdx != int(step / 1000):
-                        sv.saver.save(sess, fName)
-                        saveIdx = int(step / 1000)
-                        print('model saved...')
+                if np.mean(avg_r) > 350:
+                    print('Model training success...')
+                    sv.request_stop()
 
-                # Local step 증가
-                local_step += 1
-                
-                # 평균 점수 300 이상이면 종료
-                if avg_r > 300:
-                    break
-
-            # Loop 종료 시 저장
-            if is_chief:
-                sv.saver.save(sess, fName)
-
-            sv.stop()
-            print('Done')
 
 
 # Test용 method
