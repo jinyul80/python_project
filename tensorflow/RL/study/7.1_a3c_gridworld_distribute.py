@@ -1,7 +1,6 @@
 import gym
 import numpy as np
 import tensorflow as tf
-import tensorflow.contrib.slim as slim
 import os
 import argparse
 import time
@@ -11,11 +10,11 @@ import cv2
 parser = argparse.ArgumentParser(description="Simple 'argparse' demo application")
 parser.add_argument('--mode', default='train', help='Execute mode')
 parser.add_argument('--learning_rate', default=1e-5, type=float)
-parser.add_argument('--logdir', default='./log/7.1_a3c_gridworld_distribute/2')
+parser.add_argument('--logdir', default='./log/7.1_a3c_gridworld_distribute/4')
 parser.add_argument('--max_steps', default=100001, type=int)
 parser.add_argument('--env_size', default=5, type=int)
 parser.add_argument('--max_ep_steps', default=50, type=int)
-parser.add_argument('--worker_hosts_num', default=10, type=int)
+parser.add_argument('--worker_hosts_num', default=20, type=int)
 parser.add_argument('--job_name', type=str, help="One of 'ps', 'worker'")
 parser.add_argument('--task_index', type=int, default=0, help="Index of task within the job")
 
@@ -42,7 +41,7 @@ def cluster_spec(num_workers, num_ps):
     all_ps = []
 
     port = 49000
-    host = '192.168.1.253'
+    host = '192.168.1.246'
     for _ in range(num_ps):
         all_ps.append('{}:{}'.format(host, port))
         port += 1
@@ -54,24 +53,24 @@ def cluster_spec(num_workers, num_ps):
 
     # PC1
     port = 49100
-    host = '192.168.1.253'
+    host = '192.168.1.246'
     for _ in range(num_workers):
         all_workers.append('{}:{}'.format(host, port))
         port += 1
 
-    # PC2
-    port = 49100
-    host = '192.168.1.252'
-    for _ in range(num_workers):
-        all_workers.append('{}:{}'.format(host, port))
-        port += 1
-
-    # PC3
-    port = 49100
-    host = '192.168.1.251'
-    for _ in range(num_workers):
-        all_workers.append('{}:{}'.format(host, port))
-        port += 1
+    # # PC2
+    # port = 49100
+    # host = '192.168.1.252'
+    # for _ in range(num_workers):
+    #     all_workers.append('{}:{}'.format(host, port))
+    #     port += 1
+    #
+    # # PC3
+    # port = 49100
+    # host = '192.168.1.251'
+    # for _ in range(num_workers):
+    #     all_workers.append('{}:{}'.format(host, port))
+    #     port += 1
 
     cluster['worker'] = all_workers
     return cluster
@@ -111,9 +110,6 @@ class A3CNetwork(object):
             self.actions = tf.placeholder(shape=[None, self.output_size], dtype=tf.float32, name='input_action')
             self.advantages = tf.placeholder(tf.float32, [None], name="advantages")
             self.rewards = tf.placeholder(tf.float32, [None], name="reward")
-
-            self.prev_rewards = tf.placeholder(shape=[None, 1], dtype=tf.float32, name='prev_rewards')
-            self.prev_actions = tf.placeholder(shape=[None, self.output_size], dtype=tf.float32, name='prev_actions')
 
             # 콘볼루션을 통해 이미지 인코딩
             with tf.variable_scope('Conv'):
@@ -177,9 +173,6 @@ class A3CNetwork(object):
             # Normalization
             net = tf.layers.batch_normalization(inputs=net)
             net = tf.nn.elu(net)
-
-            # Concat Prev rewards, actions
-            net = tf.concat(axis=1, values=[net, self.prev_rewards, self.prev_actions])
 
             # LSTM
             _rnn_out_size = 128
@@ -305,9 +298,6 @@ class Agent():
 
         rnn_state = self.local_network.state_init
 
-        r = 0
-        action_one_hot = np.zeros(self.output_dim)
-
         while not done:
             episode_step += 1
 
@@ -319,9 +309,7 @@ class Agent():
             feed = {
                 self.local_network.states: [s],
                 self.local_network.state_in[0]: rnn_state[0],
-                self.local_network.state_in[1]: rnn_state[1],
-                self.local_network.prev_rewards: [[r]],
-                self.local_network.prev_actions: [action_one_hot]
+                self.local_network.state_in[1]: rnn_state[1]
             }
             action_prob, v, rnn_state = sess.run([self.local_network.pred, self.local_network.values, self.local_network.state_out],
                                                  feed_dict=feed)
@@ -371,9 +359,6 @@ class Agent():
         train_rewards = buffer[:, 2]
         values = buffer[:, 3]
 
-        prev_r = np.vstack([0] + train_rewards[:-1].tolist())
-        prev_a = np.vstack([np.zeros(self.output_dim), ys[:-1].tolist()])
-
         rnn_state = self.local_network.state_init
 
         discount_rewards = calc_discount_rewards(train_rewards)
@@ -390,9 +375,7 @@ class Agent():
             self.local_network.rewards: discount_rewards,
             self.local_network.advantages: advantage,
             self.local_network.state_in[0]: rnn_state[0],
-            self.local_network.state_in[1]: rnn_state[1],
-            self.local_network.prev_rewards: prev_r,
-            self.local_network.prev_actions: prev_a
+            self.local_network.state_in[1]: rnn_state[1]
         }
 
         gradients = sess.run(self.local_network.gradients, feed)
@@ -440,38 +423,42 @@ def main_train():
         local_variables = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='local')
         local_init_op = tf.variables_initializer(local_variables)
 
+        # Saver
         saver_var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='global')
         saver = tf.train.Saver(var_list=saver_var_list)
 
+        # Summary
+        summary_writer = tf.summary.FileWriter(args.logdir)
+
         sess_config = tf.ConfigProto(device_filters=["/job:ps", "/job:worker/task:%d" % args.task_index])
 
-        sv = tf.train.Supervisor(is_chief=is_chief,
-                                 logdir=args.logdir,
-                                 init_op=tf.global_variables_initializer(),
-                                 local_init_op=local_init_op,
-                                 saver=saver,
-                                 summary_op=None,
-                                 save_model_secs=300,
-                                 global_step=single_agent.global_step)
+        scaffold = tf.train.Scaffold(init_op=tf.global_variables_initializer(),
+                                     ready_for_local_init_op=local_init_op,
+                                     saver=saver)
 
-        with sv.managed_session(server.target, config=sess_config) as sess:
+        with tf.train.MonitoredTrainingSession(master=server.target,
+                                               is_chief=is_chief,
+                                               hooks=[],
+                                               scaffold=scaffold,
+                                               checkpoint_dir=args.logdir,
+                                               config=sess_config) as mon_sess:
 
             # 모델 그래프 최종 확정
             tf.get_default_graph().finalize()
 
             print('Model training starting...')
 
-            before_step = sess.run(tf.train.get_global_step()) - 1
+            before_step = mon_sess.run(tf.train.get_global_step()) - 1
             before_time = time.time()
 
             # 100 step 마다 summaray 기록
             div_num = 100
             summary_idx = int(before_step / div_num)
 
-            while not sv.should_stop():
-                step, ep_r, avg_r, frame_sec = single_agent.play_episode(sess)
+            while not mon_sess.should_stop():
+                step, ep_r, avg_r, frame_sec = single_agent.play_episode(mon_sess)
 
-                message = "Task: {}, Episode: {}, reward= {:.2f}, avg= {:.2f} ({:.2f} frame/sec)".format(args.task_index, step, ep_r, avg_r, frame_sec)
+                message = "Task: {:2}, Episode: {}, reward= {:.2f}, avg= {:.2f} ({:.2f} frame/sec)".format(args.task_index, step, ep_r, avg_r, frame_sec)
                 print(message)
 
                 n_step = step - before_step
@@ -489,15 +476,15 @@ def main_train():
 
                     summary = tf.Summary()
                     summary.value.add(tag='summary/avg_reward', simple_value=float(avg_r))
-                    # summary.value.add(tag='frame/sec', simple_value=float(frame_sec))
+                    summary.value.add(tag='summary/frame_sec', simple_value=float(frame_sec))
                     summary.value.add(tag='summary/step_sec', simple_value=float(step_per_sec))
-                    sv.summary_computed(sess, summary, global_step=step)
+                    summary_writer.add_summary(summary, global_step=step)
 
                 if step >= args.max_steps:
-                    sv.request_stop()
+                    break
 
                 if avg_r > 10:
-                    sv.request_stop()
+                    break
 
 
 # Test용 method
