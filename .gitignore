@@ -1,0 +1,7 @@
+# Default ignored files
+/.idea
+/DeepLearningZeroToAll
+/ReinforcementZeroToAll
+/test
+settings.json
+*.pyc
