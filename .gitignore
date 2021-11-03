@@ -5,3 +5,4 @@
 /test
 settings.json
 *.pyc
+*.h5
