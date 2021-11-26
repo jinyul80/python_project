@@ -3,6 +3,7 @@
 /DeepLearningZeroToAll
 /ReinforcementZeroToAll
 /test
+/keras/qualcomm_pair_space_check/dataset/
 settings.json
 *.pyc
 *.h5
