@@ -5,21 +5,15 @@ import numpy as np
 import os
 import argparse
 
-import matplotlib.pyplot as plt
-
-# # Test
-# img_path = os.path.join(os.getcwd(), "dataset", "abnormal", "1.jpg")
-# img = pilimg.open(img_path)
-
-# plt.imshow(img)
-# plt.show()
-
 # Argument set
 parser = argparse.ArgumentParser(
     description="Qualcomm pair space check application")
 parser.add_argument(
-    "--img", dest="img_path", required=True, help="Classfication image file path"
-)
+    "--img", dest="img_path", required=True, help="Classfication image file path")
+parser.add_argument(
+    "--ip", dest="server_ip", default="localhost", help="Tensorflow serving server ip")
+parser.add_argument(
+    "--port", dest="server_port", default="8501", help="Tensorflow serving server port")
 
 args = parser.parse_args()
 
@@ -33,21 +27,19 @@ img = pilimg.open(args.img_path)
 # Image to json
 img = np.array(img)
 img = img[np.newaxis, ...]
-# print('shape:', img.shape)
 
 data = json.dumps({"signature_name": "serving_default",
                   "instances": img.tolist()})
-# print('Data: {} ... {}'.format(data[:50], data[len(data)-52:]))
 
 headers = {"content-type": "application/json"}
 json_response = requests.post(
-    "http://localhost:8501/v1/models/qualcomm_pair_space_check:predict",
+    "http://" + args.server_ip + ":" + args.server_port +
+    "/v1/models/qualcomm_pair_space_check:predict",
     data=data,
     headers=headers,
 )
 predictions = json.loads(json_response.text)["predictions"]
 predictions = np.array(predictions).flatten()
-print(predictions)
-predictions = np.where(predictions < 0.5, 0, 1)
+pred = np.where(predictions < 0.5, 0, 1)
 
-print(predictions[0])
+print("{:.2f} {}".format(predictions[0], pred[0]))
