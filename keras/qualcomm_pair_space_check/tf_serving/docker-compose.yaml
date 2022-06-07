@@ -1,0 +1,14 @@
+version: "3.0"
+services:
+  serving:
+    image: tensorflow/serving
+    container_name: tf_serving
+    ports:
+      - "8501:8501"
+    volumes:
+      - "/cam_storage/workfile/jinyul/python_project/keras/qualcomm_pair_space_check/resnet50v2:/models/qualcomm_pair_space_model"
+    environment:
+      - MODEL_NAME=qualcomm_pair_space_model
+      - MODEL_BASE_PATH=/models
+
+    

@@ -4,6 +4,7 @@
 /ReinforcementZeroToAll
 /test
 /keras/qualcomm_pair_space_check/dataset/
+/keras/qualcomm_pair_space_check/resnet50v2/
 settings.json
 *.pyc
 *.h5
