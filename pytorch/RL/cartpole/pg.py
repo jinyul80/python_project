@@ -7,19 +7,28 @@ import torch.optim as optim
 from torch.distributions import Categorical
 import matplotlib.pyplot as plt
 
+from torch.utils.tensorboard import SummaryWriter
+
 # Hyperparameters
 learning_rate = 0.001
 gamma = 0.99
 max_epoch = 2000
 
+# Tensorboard
+writer = SummaryWriter(log_dir="/mnt/tf_log/cartpole")
+
 
 class Policy(nn.Module):
-    def __init__(self):
+    def __init__(self, input_size: int, output_size: int):
         super(Policy, self).__init__()
         self.data = []
 
-        self.fc1 = nn.Linear(4, 128)
-        self.fc2 = nn.Linear(128, 2)
+        n_width = 16
+
+        self.input_layer = nn.Linear(input_size, n_width)
+        self.hidden1 = nn.Linear(n_width, n_width)
+        self.hidden2 = nn.Linear(n_width, n_width)
+        self.head = nn.Linear(n_width, output_size)
         # optimizer
         self.optimizer = optim.AdamW(self.parameters(), lr=learning_rate)
         # scheduler
@@ -28,14 +37,16 @@ class Policy(nn.Module):
         )
 
     def forward(self, x: Tensor) -> Tensor:
-        x = F.relu(self.fc1(x))
-        x = F.softmax(self.fc2(x), dim=0)
-        return x
+        out = F.relu(self.input_layer(x))
+        out = F.relu(self.hidden1(out))
+        out = F.relu(self.hidden2(out))
+        out = F.softmax(self.head(out), dim=0)
+        return out
 
     def put_data(self, item) -> None:
         self.data.append(item)
 
-    def train_net(self) -> None:
+    def train_net(self):
         # 누적 리워드
         R = 0
         # 모델의 그라디언트 초기화
@@ -57,12 +68,18 @@ class Policy(nn.Module):
         # 메모리 초기화
         self.data = []
 
+        return loss.detach().numpy()
+
 
 def main() -> None:
     # 환경 생성
     env = gym.make("CartPole-v1")
     # 모델 생성
-    pi = Policy()
+    pi = Policy(env.observation_space.shape[0], env.action_space.n)
+
+    # 모델 레이어 목록 출력
+    print(pi)
+    print()
 
     # 변수 설정
     acc_score = 0.0
@@ -94,7 +111,11 @@ def main() -> None:
         acc_score += score
 
         # 모델 학습
-        pi.train_net()
+        loss = pi.train_net()
+
+        # Tensorboard에 학습 상태 기록
+        writer.add_scalar("Train/reward", score, n_epi)
+        writer.add_scalar("Train/loss", loss, n_epi)
 
         if n_epi % print_interval == 0 and n_epi != 0:
             # 학습 결과 그래프로 출력
@@ -109,10 +130,14 @@ def main() -> None:
             avg_score = acc_score / print_interval
             print(f"# of episode :{n_epi}, avg score : {avg_score}")
             acc_score = 0.0
+
             # 평균 점수가 일정 이상이면 종료
             if avg_score >= 490:
                 break
     env.close()
+
+    # Log 기록
+    writer.flush()
 
 
 if __name__ == "__main__":
