@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.distributions import Categorical
+from torchinfo import summary
 from torch.utils.tensorboard import SummaryWriter
 
 # Vanilla Actor Critic
@@ -12,7 +13,7 @@ from torch.utils.tensorboard import SummaryWriter
 # Hyperparameters
 learning_rate = 0.0005
 gamma = 0.99
-n_rollout = 10
+n_rollout = 20
 max_epoch = 2000
 
 # Tensorboard
@@ -33,7 +34,7 @@ class ActorCritic(nn.Module):
         self.optimizer = optim.AdamW(self.parameters(), lr=learning_rate)
         # scheduler
         self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
-            self.optimizer, T_max=max_epoch, eta_min=1e-4
+            self.optimizer, T_max=max_epoch, eta_min=1e-5
         )
 
     def pi(self, x, softmax_dim=0) -> Tensor:
@@ -89,9 +90,33 @@ class ActorCritic(nn.Module):
         return loss.detach().numpy().mean()
 
 
+def test(model: ActorCritic):
+    """학습 완료 후 모델 Test
+
+    Args:
+        model (PPO): 학습 완료된 모델
+    """
+    env_test = gym.make("CartPole-v1", render_mode="human")
+    s, _ = env_test.reset()
+    done = False
+
+    while not done:
+        env_test.render()
+
+        prob = model.pi(torch.from_numpy(s).float())
+        m = Categorical(prob)
+        a = m.sample().item()
+        s_prime, r, done, truncated, info = env_test.step(a)
+        s = s_prime
+
+        if done or truncated:
+            break
+
+
 def main():
     env = gym.make("CartPole-v1")
     model = ActorCritic()
+    summary(model)
 
     acc_score = 0.0
     print_interval = 20
@@ -139,22 +164,10 @@ def main():
     # Log 기록
     writer.flush()
 
-    # Test
-    env_test = gym.make("CartPole-v1", render_mode="human")
-    s, _ = env_test.reset()
-    done = False
+    print("모델 학습 완료!!!")
 
-    while not done:
-        env_test.render()
-
-        prob = model.pi(torch.from_numpy(s).float())
-        m = Categorical(prob)
-        a = m.sample().item()
-        s_prime, r, done, truncated, info = env_test.step(a)
-        s = s_prime
-
-        if done or truncated:
-            break
+    # 학습된 모델 실제 실행
+    test(model)
 
 
 if __name__ == "__main__":
