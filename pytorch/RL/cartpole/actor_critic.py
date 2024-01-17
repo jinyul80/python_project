@@ -1,3 +1,5 @@
+# Advantage Actor Critic
+
 import gymnasium as gym
 import torch
 from torch import Tensor
@@ -8,7 +10,8 @@ from torch.distributions import Categorical
 from torchinfo import summary
 from torch.utils.tensorboard import SummaryWriter
 
-# Vanilla Actor Critic
+DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print(DEVICE)
 
 # Hyperparameters
 learning_rate = 0.0005
@@ -17,36 +20,41 @@ n_rollout = 20
 max_epoch = 2000
 
 # Tensorboard
-writer = SummaryWriter(log_dir="/mnt/tf_log/cartpole_vac")
+writer = SummaryWriter(log_dir="/mnt/tf_log/cartpole_a2c")
 
 
 class ActorCritic(nn.Module):
-    def __init__(self):
+    def __init__(self, n_space: int, n_action: int):
         super(ActorCritic, self).__init__()
         self.data = []
 
         n_width = 256
 
-        self.fc1 = nn.Linear(4, n_width)
-        self.fc_pi = nn.Linear(n_width, 2)
-        self.fc_v = nn.Linear(n_width, 1)
+        # Actor network
+        self.actor_net = nn.Sequential(
+            nn.Linear(n_space, n_width),
+            nn.ReLU(),
+            nn.Linear(n_width, n_action),
+            nn.Softmax(dim=-1),
+        )
+
+        # Critic network
+        self.critic_net = nn.Sequential(
+            nn.Linear(n_space, n_width), nn.ReLU(), nn.Linear(n_width, 1)
+        )
+
         # optimizer
         self.optimizer = optim.AdamW(self.parameters(), lr=learning_rate)
         # scheduler
         self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
-            self.optimizer, T_max=max_epoch, eta_min=1e-5
+            self.optimizer, T_max=max_epoch, eta_min=1e-6
         )
 
-    def pi(self, x, softmax_dim=0) -> Tensor:
-        x = F.relu(self.fc1(x))
-        x = self.fc_pi(x)
-        prob = F.softmax(x, dim=softmax_dim)
-        return prob
+    def forward(self, state: Tensor):
+        prob = self.actor_net(state)
+        value = self.critic_net(state)
 
-    def v(self, x: Tensor):
-        x = F.relu(self.fc1(x))
-        v = self.fc_v(x)
-        return v
+        return prob, value
 
     def put_data(self, transition) -> None:
         self.data.append(transition)
@@ -57,37 +65,73 @@ class ActorCritic(nn.Module):
             s, a, r, s_prime, done = transition
             s_lst.append(s)
             a_lst.append([a])
-            r_lst.append([r / 100.0])
+            r_lst.append([r])
             s_prime_lst.append(s_prime)
-            done_mask = 0.0 if done else 1.0
-            done_lst.append([done_mask])
+            done_lst.append([int(done)])
 
         s_batch, a_batch, r_batch, s_prime_batch, done_batch = (
-            torch.tensor(s_lst, dtype=torch.float),
-            torch.tensor(a_lst),
-            torch.tensor(r_lst, dtype=torch.float),
-            torch.tensor(s_prime_lst, dtype=torch.float),
-            torch.tensor(done_lst, dtype=torch.float),
+            torch.tensor(s_lst, dtype=torch.float).to(DEVICE),
+            torch.tensor(a_lst).to(DEVICE),
+            torch.tensor(r_lst, dtype=torch.float).to(DEVICE),
+            torch.tensor(s_prime_lst, dtype=torch.float).to(DEVICE),
+            torch.tensor(done_lst).to(DEVICE),
         )
         self.data = []
         return s_batch, a_batch, r_batch, s_prime_batch, done_batch
 
+    def get_returns(
+        self, next_states: Tensor, rewards: Tensor, done: Tensor, gamma=0.99
+    ) -> Tensor:
+        """현재 보상 + 앞으로 얻게될 보상의 합 계산
+
+        Args:
+            next_states (Tensor): 다음 상태 리스트
+            rewards (Tensor): reward 리스트
+            done (Tensor): 종료 여부 리스트
+            gamma (float, optional): 앞으로 얻게될 보상에 대한 감쇠 값. Defaults to 0.99.
+
+        Returns:
+            Tensor: reward 리스트
+        """
+
+        # 현재 Trajectory의 마지막 상태에 대한 값 예측, 에피소드가 끝났다면 다음 상태의 반환 값을 전파하지 않음
+        _, v_next = self.forward(next_states[-1])
+
+        R: Tensor = v_next * (1 - done[-1])
+
+        # rewards의 역순부터 반환 값 계산
+        batch_return = []
+
+        for idx in reversed(range(len(rewards))):
+            reward = rewards[idx]
+            R = reward + gamma * R
+            batch_return.append(R)
+
+        batch_return.reverse()
+
+        return torch.tensor(batch_return).unsqueeze(1).to(DEVICE)
+
     def train_net(self):
         s, a, r, s_prime, done = self.make_batch()
-        td_target = r + gamma * self.v(s_prime) * done
-        delta = td_target - self.v(s)
 
-        pi = self.pi(s, softmax_dim=1)
-        pi_a = pi.gather(1, a)
-        loss = -torch.log(pi_a) * delta.detach() + F.smooth_l1_loss(
-            self.v(s), td_target.detach()
-        )
+        # 반환 값 계산
+        td_target = self.get_returns(s_prime, r, done)
+
+        probs, values = self.forward(s)
+        probs_act = probs.gather(1, a)
+
+        advantages = td_target - values
+
+        loss_actor = -(torch.log(probs_act) * advantages.detach()).mean()
+        loss_critic = 0.5 * F.mse_loss(values, td_target.detach())
+
+        loss = loss_actor + loss_critic
 
         self.optimizer.zero_grad()
-        loss.mean().backward()
+        loss.backward()
         self.optimizer.step()
 
-        return loss.detach().numpy().mean()
+        return loss.detach().cpu().numpy()
 
 
 def test(model: ActorCritic):
@@ -103,7 +147,7 @@ def test(model: ActorCritic):
     while not done:
         env_test.render()
 
-        prob = model.pi(torch.from_numpy(s).float())
+        prob, _ = model(torch.from_numpy(s).float().to(DEVICE))
         m = Categorical(prob)
         a = m.sample().item()
         s_prime, r, done, truncated, info = env_test.step(a)
@@ -115,8 +159,9 @@ def test(model: ActorCritic):
 
 def main():
     env = gym.make("CartPole-v1")
-    model = ActorCritic()
-    summary(model)
+    model = ActorCritic(env.observation_space.shape[0], env.action_space.n)
+    model.to(DEVICE)
+    summary(model, (4, 4))
 
     acc_score = 0.0
     print_interval = 20
@@ -124,18 +169,19 @@ def main():
     for n_epi in range(max_epoch):
         done = False
         s, _ = env.reset()
-        score = 0.0
+        ep_score = 0.0
+        ep_loss = 0.0
 
         while not done:
             for t in range(n_rollout):
-                prob = model.pi(torch.from_numpy(s).float())
+                prob, _ = model(torch.from_numpy(s).float().to(DEVICE))
                 m = Categorical(prob)
                 a = m.sample().item()
                 s_prime, r, done, truncated, info = env.step(a)
                 model.put_data((s, a, r, s_prime, done))
 
                 s = s_prime
-                score += r
+                ep_score += r
 
                 # Episode 종료
                 if done or truncated:
@@ -143,12 +189,13 @@ def main():
                     break
 
             loss = model.train_net()
+            ep_loss += loss
 
-        acc_score += score
+        acc_score += ep_score
 
         # Tensorboard에 학습 상태 기록
-        writer.add_scalar("Train/reward", score, n_epi)
-        writer.add_scalar("Train/loss", loss, n_epi)
+        writer.add_scalar("Train/reward", ep_score, n_epi)
+        writer.add_scalar("Train/loss", ep_loss, n_epi)
 
         if n_epi % print_interval == 0 and n_epi != 0:
             avg_score = acc_score / print_interval
@@ -156,8 +203,8 @@ def main():
             acc_score = 0.0
 
             # 평균 점수가 일정 이상이면 종료
-            if avg_score >= 490:
-                break
+            # if avg_score >= 490:
+            #     break
 
     env.close()
 
