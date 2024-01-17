@@ -11,10 +11,10 @@ from torchinfo import summary
 # PPO ( Proximal Policy Optimization )
 
 # Hyperparameters
-learning_rate = 0.0005
+learning_rate = 0.0001
 gamma = 0.98
 lmbda = 0.95
-eps_clip = 0.2
+eps_clip = 0.1
 K_epoch = 3
 max_epoch = 2000
 T_horizon = 20
@@ -31,7 +31,12 @@ class PPO(nn.Module):
         self.fc1 = nn.Linear(4, 256)
         self.fc_pi = nn.Linear(256, 2)
         self.fc_v = nn.Linear(256, 1)
-        self.optimizer = optim.Adam(self.parameters(), lr=learning_rate)
+        # optimizer
+        self.optimizer = optim.AdamW(self.parameters(), lr=learning_rate)
+        # scheduler
+        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
+            self.optimizer, T_max=max_epoch, eta_min=1e-6
+        )
 
     def pi(self, x: Tensor, softmax_dim=0) -> Tensor:
         x = F.relu(self.fc1(x))
@@ -168,8 +173,8 @@ def main():
             acc_score = 0.0
 
             # 평균 점수가 일정 이상이면 종료
-            if avg_score >= 490:
-                break
+            # if avg_score >= 490:
+            #     break
 
     env.close()
 

@@ -15,7 +15,7 @@ gamma = 0.99
 max_epoch = 2000
 
 # Tensorboard
-writer = SummaryWriter(log_dir="/mnt/tf_log/cartpole")
+writer = SummaryWriter(log_dir="/mnt/tf_log/cartpole_pg")
 
 
 class Policy(nn.Module):
@@ -33,7 +33,7 @@ class Policy(nn.Module):
         self.optimizer = optim.AdamW(self.parameters(), lr=learning_rate)
         # scheduler
         self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
-            self.optimizer, T_max=max_epoch, eta_min=1e-4
+            self.optimizer, T_max=max_epoch, eta_min=1e-6
         )
 
     def forward(self, x: Tensor) -> Tensor:
@@ -132,8 +132,8 @@ def main() -> None:
             acc_score = 0.0
 
             # 평균 점수가 일정 이상이면 종료
-            if avg_score >= 490:
-                break
+            # if avg_score >= 490:
+            #     break
     env.close()
 
     # Log 기록
