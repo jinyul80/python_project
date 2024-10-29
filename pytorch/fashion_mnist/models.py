@@ -43,7 +43,7 @@ class MyCNNModel(nn.Module):
         return logits
 
 
-class MyTransferLearningModel(torch.nn.Module):
+class MyViTModel(torch.nn.Module):
 
     def __init__(self, feature_extractor, num_classes=10):
         # feature_extractor = True: Feature Extractor,  False: Fine Tuning
@@ -51,8 +51,8 @@ class MyTransferLearningModel(torch.nn.Module):
         super().__init__()
 
         # pretrained_model = models.vit_b_16(weights=models.ViT_B_16_Weights.DEFAULT)
-        pretrained_model = models.efficientnet_b2(
-            weights=models.EfficientNet_B2_Weights.IMAGENET1K_V1
+        pretrained_model = models.vit_b_16(
+            weights=models.ViT_B_16_Weights.IMAGENET1K_V1
         )
         print(pretrained_model)
 
@@ -61,11 +61,8 @@ class MyTransferLearningModel(torch.nn.Module):
                 param.require_grad = False
 
         # vision transformer 에서의 classifier 부분은 heads 로 지정
-        pretrained_model.heads = torch.nn.Sequential(
-            torch.nn.Linear(pretrained_model.heads[0].in_features, 128),
-            torch.nn.ReLU(),
-            torch.nn.Dropout(0.5),
-            torch.nn.Linear(128, num_classes),
+        pretrained_model.heads = torch.nn.Linear(
+            pretrained_model.heads[0].in_features, num_classes
         )
 
         self.model = pretrained_model

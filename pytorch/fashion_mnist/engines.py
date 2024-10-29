@@ -90,6 +90,7 @@ def show_train_history(
     train_accuracy_list: list[float],
     val_loss_list: list[float],
     val_accuracy_list: list[float],
+    file_path="",
 ):
 
     plt.figure(figsize=(10, 5))
@@ -112,4 +113,8 @@ def show_train_history(
     plt.plot(val_accuracy_list, label="validation")
     plt.legend()
 
-    plt.show()
+    if file_path is not None:
+        plt.savefig(file_path)
+
+    else:
+        plt.show()

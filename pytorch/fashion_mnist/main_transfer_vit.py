@@ -14,11 +14,11 @@ import ssl
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
-EPOCHS = 100
-BATCH_SIZE = 64
+EPOCHS = 10
+BATCH_SIZE = 32
 NUM_CLASSES = 10
-IMAGE_SIZE = (42, 42)
-LEARNING_RATE = 1e-5
+IMAGE_SIZE = (224, 224)
+LEARNING_RATE = 1e-6
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 print("\n##################################################")
@@ -28,7 +28,7 @@ print("##################################################\n")
 
 def main():
     logging.basicConfig(
-        filename="log/effnet_transfer.log",
+        filename="log/vit_transfer.log",
         format="%(asctime)s - %(message)s",
         level=logging.INFO,
     )
@@ -54,7 +54,7 @@ def main():
         BATCH_SIZE, train_transform, validation_transform
     )
 
-    model = MyEffNetModel(NUM_CLASSES).to(DEVICE)
+    model = MyViTModel(feature_extractor=True, num_classes=NUM_CLASSES).to(DEVICE)
 
     metric_fn = Accuracy(task="multiclass", num_classes=NUM_CLASSES)
     metric_fn = metric_fn.to(DEVICE)
@@ -122,7 +122,11 @@ def main():
 
     # 학습 이력 그래프
     show_train_history(
-        train_loss_list, train_accuracy_list, val_loss_list, val_accuracy_list
+        train_loss_list,
+        train_accuracy_list,
+        val_loss_list,
+        val_accuracy_list,
+        "log/vit_learning_history.png",
     )
 
 
