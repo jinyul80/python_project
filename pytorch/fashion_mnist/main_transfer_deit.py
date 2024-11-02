@@ -7,7 +7,8 @@ from torchvision import transforms
 from torchmetrics import Accuracy
 
 from datasets import get_dataloader
-from models import MyViTModel, MyEffNetModel
+
+# from models import MyDeiTModel
 from engines import train_one_epoch, eval_one_epoch, show_train_history
 
 import ssl
@@ -19,7 +20,7 @@ BATCH_SIZE = 32
 NUM_CLASSES = 10
 IMAGE_SIZE = (224, 224)
 LEARNING_RATE = 1e-5
-DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 print("\n##################################################")
 print(f"using PyTorch version: {torch.__version__}, Device: {DEVICE}")
@@ -54,7 +55,16 @@ def main():
         BATCH_SIZE, train_transform, validation_transform
     )
 
-    model = MyViTModel(feature_extractor=True, num_classes=NUM_CLASSES).to(DEVICE)
+    print(torch.__version__)
+
+    model = torch.hub.load(
+        "facebookresearch/deit:main", "deit_base_patch16_224", pretrained=True
+    )
+
+    print(model)
+    model.head = torch.nn.Linear(model.head.in_features, NUM_CLASSES)
+
+    model.to(DEVICE)
 
     metric_fn = Accuracy(task="multiclass", num_classes=NUM_CLASSES)
     metric_fn = metric_fn.to(DEVICE)
